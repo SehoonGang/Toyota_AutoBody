@@ -8,11 +8,12 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTextEdit, QMessageBox
 )
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+from core import Utils, FileType
 
 class Simple3DView(QOpenGLWidget):    
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(800, 600)  # 필요 시 조정
+        self.setMinimumSize(800, 600)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -23,8 +24,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         
         leftWidget = QWidget()
-        rightWidget = QWidget()
-        
+        rightWidget = QWidget()        
         layout = QVBoxLayout(root)
         contentLayout = QHBoxLayout()
 
@@ -53,16 +53,33 @@ class MainWindow(QMainWindow):
         radioRow.addStretch(1)
         rightLayout.addLayout(radioRow)
 
-        rightLayout.addWidget(QLabel("Source Data Path"))
-        self.pathEdit = QLineEdit()
-        self.pathEdit.setPlaceholderText("Enter source data floder path")
-        rightLayout.addWidget(self.pathEdit)
+        sourceDataFolderRow = QHBoxLayout()
+        sourceDataFolderRow.addWidget(QLabel("Source Data"))
+        self.tbSourceDataFolderPath = QLineEdit()
+        sourceDataFolderRow.addWidget(self.tbSourceDataFolderPath)
+        self.btnSourceDataLoad = QPushButton("Load")
+        sourceDataFolderRow.addWidget(self.btnSourceDataLoad)
+        rightLayout.addLayout(sourceDataFolderRow)
+        
+        calibrationFileRow = QHBoxLayout()
+        calibrationFileRow.addWidget(QLabel("Calibration File"))
+        self.tbCalibrationFilePath = QLineEdit()
+        calibrationFileRow.addWidget(self.tbCalibrationFilePath)
+        self.btnCalibrationFilePath = QPushButton("Load")
+        calibrationFileRow.addWidget(self.btnCalibrationFilePath)
+        rightLayout.addLayout(calibrationFileRow)
 
-        self.btnLoad = QPushButton("Load Source Data")
+        deepLearningFileRow = QHBoxLayout()
+        deepLearningFileRow.addWidget(QLabel("Deep Learning"))
+        self.tbDeepLearningModelFilePath = QLineEdit()        
+        deepLearningFileRow.addWidget(self.tbDeepLearningModelFilePath)
+        self.btnDeepLearningFilePath = QPushButton("Load")
+        deepLearningFileRow.addWidget(self.btnDeepLearningFilePath)
+        rightLayout.addLayout(deepLearningFileRow)
+        
         self.btnMerge = QPushButton("Merge")
         self.btnInspect = QPushButton("Inspect")
-
-        rightLayout.addWidget(self.btnLoad)
+        
         rightLayout.addWidget(self.btnMerge)
         rightLayout.addWidget(self.btnInspect)
         rightLayout.addWidget(QLabel("Log"))
@@ -70,13 +87,23 @@ class MainWindow(QMainWindow):
         self.log.setReadOnly(True)
         rightLayout.addWidget(self.log, 1)
 
-        self.btnLoad.clicked.connect(self.on_load_folder)
+        self.btnSourceDataLoad.clicked.connect(self.on_source_data_load)
+        self.btnCalibrationFilePath.clicked.connect(self.on_calibration_file_load)
+        self.btnDeepLearningFilePath.clicked.connect(self.on_deep_learning_file_load)        
         self.btnMerge.clicked.connect(self.on_merge)
         self.btnInspect.clicked.connect(self.on_inspect)
 
-    def on_load_folder(self):
-        path = self.pathEdit.text().strip()
-        self.log.append(f"Loading source data from: {self.current_model()}")
+    def on_source_data_load(self):        
+        Utils.on_load_source_data_folder(self, self.tbSourceDataFolderPath.text(), FileType.Image)
+        self.log.append(rf"load {self.tbSourceDataFolderPath.text()} completed.")
+
+    def on_calibration_file_load(self):
+        Utils.on_load_source_data_folder(self, self.tbCalibrationFilePath.text(), FileType.Calibration)
+        self.log.append(rf"load {self.tbCalibrationFilePath.text()} completed.")
+
+    def on_deep_learning_file_load(self):
+        Utils.on_load_source_data_folder(self, self.tbDeepLearningModelFilePath.text(), FileType.DeepLearningModel)
+        self.log.append(rf"load {self.tbDeepLearningModelFilePath.text()} completed.")
 
     def on_merge(self):
         self.log.append("Merging data...")
