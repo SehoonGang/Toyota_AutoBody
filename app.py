@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTextEdit, QMessageBox
 )
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-from core import Utils, FileType
+from core import Utils, FileType, PCD
 
 class Simple3DView(QOpenGLWidget):    
     def __init__(self, parent=None):
@@ -17,11 +17,12 @@ class Simple3DView(QOpenGLWidget):
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__()
+        super().__init__()        
         self.setWindowTitle("Body Hole Auto Insepction System")
         self.resize(1920, 1020)
         root = QWidget()
-        self.setCentralWidget(root)
+        self.setCentralWidget(root)        
+        self.utils = Utils()
         
         leftWidget = QWidget()
         rightWidget = QWidget()        
@@ -94,18 +95,19 @@ class MainWindow(QMainWindow):
         self.btnInspect.clicked.connect(self.on_inspect)
 
     def on_source_data_load(self):        
-        Utils.on_load_source_data_folder(self, self.tbSourceDataFolderPath.text(), FileType.Image)
+        self.utils.on_load_source_data_folder(self.tbSourceDataFolderPath.text(), FileType.Image)
         self.log.append(rf"load {self.tbSourceDataFolderPath.text()} completed.")
 
     def on_calibration_file_load(self):
-        Utils.on_load_source_data_folder(self, self.tbCalibrationFilePath.text(), FileType.Calibration)
+        self.utils.on_load_source_data_folder(self.tbCalibrationFilePath.text(), FileType.Calibration)
         self.log.append(rf"load {self.tbCalibrationFilePath.text()} completed.")
 
     def on_deep_learning_file_load(self):
-        Utils.on_load_source_data_folder(self, self.tbDeepLearningModelFilePath.text(), FileType.DeepLearningModel)
+        self.utils.on_load_source_data_folder(self, self.tbDeepLearningModelFilePath.text(), FileType.DeepLearningModel)
         self.log.append(rf"load {self.tbDeepLearningModelFilePath.text()} completed.")
 
     def on_merge(self):
+        PCD.merge_pcd(self.utils.source_data_folder_files, self.utils.calibration_file_path, "fanuc")
         self.log.append("Merging data...")
 
     def on_inspect(self):

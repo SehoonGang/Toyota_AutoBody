@@ -1,6 +1,5 @@
 from enum import Enum, auto
 from pathlib import Path
-
 from tqdm import tqdm
 
 class FileType(Enum) : 
@@ -11,15 +10,15 @@ class FileType(Enum) :
 class Utils :
     def __init__(self):
         self._calibration_file_path = ""
-        self._source_data_folder_path = []
-        self.deep_leaning_model_file_path = ""
+        self._source_data_folder_files = []
+        self._deep_leaning_model_file_path = ""
 
     @property
     def calibration_file_path(self) -> str:
         return self._calibration_file_path
     @property
     def source_data_folder_files(self) -> list[str]:
-        return self._source_data_folder_path
+        return self._source_data_folder_files
     @property
     def deep_leaning_model_file_path(self) -> str:
         return self._deep_leaning_model_file_path
@@ -41,7 +40,7 @@ class Utils :
                     path.replace("IMG_Texture_8Bit.png", "Mask.tiff"),
                 ])
 
-            self._source_data_folder_path = [str(f) for f in source_data]                                    
+            self._source_data_folder_files= [str(f) for f in source_data]            
         elif (file_type == FileType.Calibration) :
             self._calibration_file_path = path
         else :
