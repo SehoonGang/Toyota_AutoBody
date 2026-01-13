@@ -8,13 +8,26 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTextEdit, QMessageBox
 )
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+import pyqtgraph.opengl as gl
 from core import Utils, FileType, PCD
 import open3d as o3d
+import numpy as np
 
-class Simple3DView(QOpenGLWidget):    
+class PointCloudView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(800, 600)
+        self.view = gl.GLViewWidget()
+        self.view.setCameraPosition(distance=2000)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.view)
+
+        self.scatter = None
+
+        g = gl.GLGridItem()
+        g.scale(200, 200, 1)
+        self.view.addItem(g)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -37,7 +50,7 @@ class MainWindow(QMainWindow):
 
         leftLayout = QVBoxLayout(leftWidget)
         leftLayout.setContentsMargins(0, 0, 0, 0)
-        self.view3d = Simple3DView()
+        self.view3d = PointCloudView()
         leftLayout.addWidget(self.view3d)
 
         rightLayout = QVBoxLayout(rightWidget)
@@ -109,15 +122,34 @@ class MainWindow(QMainWindow):
         self.log.append(rf"load {self.tbDeepLearningModelFilePath.text()} completed.")
 
     def on_merge(self):
-        self.log.append("Merging data...")
+        self.log.append("Start to merge frames")
         pcd = self.pcd.merge_pcd(self.utils.source_data_folder_files, self.utils.calibration_file_path, "fanuc")
-        o3d.visualization.draw_geometries([pcd])
+        pcd = pcd.voxel_down_sample(1.0)
+        self.set_pointcloud(pcd)
+        self.log.append("merge frames complete.")
 
     def on_inspect(self):
         self.log.append("Inspecting data...")
 
-    def current_model(self):
+    def current_model(self):        
         return 'L' if self.radioL.isChecked() else 'R'
+    
+    def set_pointcloud(self, pcd: o3d.geometry.PointCloud):
+            pts = np.asarray(pcd.points, dtype=np.float32)
+            if pcd.has_colors():
+                cols = np.asarray(pcd.colors, dtype=np.float32)
+
+                if cols.max() > 1.0:
+                    cols = cols / 255.0
+
+                alpha = np.ones((cols.shape[0], 1), dtype=np.float32)
+                cols = np.concatenate([cols, alpha], axis=1)
+            else:                
+                cols = np.ones((pts.shape[0], 4), dtype=np.float32) * 0.8
+                cols[:, 3] = 1.0
+
+            self.view3d.scatter = gl.GLScatterPlotItem(pos=pts, color=cols, size=2.0, pxMode=True)
+            self.view3d.view.addItem(self.view3d.scatter)
 
 def main():
     app = QApplication(sys.argv)

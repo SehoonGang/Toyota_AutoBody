@@ -40,7 +40,7 @@ class PCD:
             T_base_cam_dict[frame_number] = T_base_cam 
 
         merged_pcd, _ = self._icp_merge(pcd_dict=pcd_dict)
-        o3d.visualization.draw_geometries([merged_pcd])
+        return merged_pcd
 
     def _icp_merge(self, pcd_dict : dict[int, object]):
         master_frame_number = [5, 4, 1, 2, 3, 9]
@@ -65,7 +65,7 @@ class PCD:
             source = master_frames[i]["pcd"]
             target = merged_pcd
 
-            _, T_rel = self.icp_multistage_varying_voxel(
+            _, T_rel = self._icp_multistage_varying_voxel(
                 source=source,
                 target=target,
                 init_T=np.eye(4)   # base에서 이미 맞았으니 I 근처 미세조정
@@ -87,7 +87,7 @@ class PCD:
             source = sf["pcd"]
             target = merged_pcd  # 또는 merged_master (더 안정적/더 빠름은 merged_master)
 
-            _, T_rel = self.icp_multistage_varying_voxel(
+            _, T_rel = self._icp_multistage_varying_voxel(
                 source=source,
                 target=target,
                 init_T=np.eye(4)
@@ -101,7 +101,7 @@ class PCD:
 
         return merged_pcd, T_list      
 
-    def icp_multistage_varying_voxel(self,
+    def _icp_multistage_varying_voxel(self,
         source, target, init_T=None,
         stages=((2.0, 4.0, 20), (1.0, 2.0, 15), (0.5, 1.0, 10)),
         use_point_to_plane=True,
