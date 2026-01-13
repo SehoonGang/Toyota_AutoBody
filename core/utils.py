@@ -17,7 +17,7 @@ class Utils :
     def calibration_file_path(self) -> str:
         return self._calibration_file_path
     @property
-    def source_data_folder_files(self) -> list[str]:
+    def source_data_folder_files(self) -> list[tuple[str, str, str, str, str, str]]:
         return self._source_data_folder_files
     @property
     def deep_leaning_model_file_path(self) -> str:
@@ -39,9 +39,10 @@ class Utils :
                     path.replace("IMG_Texture_8Bit.png", "SCAN_POSE.txt"),
                     path.replace("IMG_Texture_8Bit.png", "Mask.tiff"),
                 ])
+            self._source_data_folder_files= source_data
 
-            self._source_data_folder_files= [str(f) for f in source_data]            
         elif (file_type == FileType.Calibration) :
             self._calibration_file_path = path
+
         else :
             self._deep_leaning_model_file_path = path

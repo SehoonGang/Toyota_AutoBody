@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from core import Utils, FileType, PCD
+import open3d as o3d
 
 class Simple3DView(QOpenGLWidget):    
     def __init__(self, parent=None):
@@ -23,6 +24,7 @@ class MainWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)        
         self.utils = Utils()
+        self.pcd = PCD()
         
         leftWidget = QWidget()
         rightWidget = QWidget()        
@@ -56,7 +58,7 @@ class MainWindow(QMainWindow):
 
         sourceDataFolderRow = QHBoxLayout()
         sourceDataFolderRow.addWidget(QLabel("Source Data"))
-        self.tbSourceDataFolderPath = QLineEdit()
+        self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260103\data\withobject_last")
         sourceDataFolderRow.addWidget(self.tbSourceDataFolderPath)
         self.btnSourceDataLoad = QPushButton("Load")
         sourceDataFolderRow.addWidget(self.btnSourceDataLoad)
@@ -64,7 +66,7 @@ class MainWindow(QMainWindow):
         
         calibrationFileRow = QHBoxLayout()
         calibrationFileRow.addWidget(QLabel("Calibration File"))
-        self.tbCalibrationFilePath = QLineEdit()
+        self.tbCalibrationFilePath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260103\cam_robot_extrinsic_0_1_hand_eye.yml")
         calibrationFileRow.addWidget(self.tbCalibrationFilePath)
         self.btnCalibrationFilePath = QPushButton("Load")
         calibrationFileRow.addWidget(self.btnCalibrationFilePath)
@@ -107,8 +109,9 @@ class MainWindow(QMainWindow):
         self.log.append(rf"load {self.tbDeepLearningModelFilePath.text()} completed.")
 
     def on_merge(self):
-        PCD.merge_pcd(self.utils.source_data_folder_files, self.utils.calibration_file_path, "fanuc")
         self.log.append("Merging data...")
+        pcd = self.pcd.merge_pcd(self.utils.source_data_folder_files, self.utils.calibration_file_path, "fanuc")
+        o3d.visualization.draw_geometries([pcd])
 
     def on_inspect(self):
         self.log.append("Inspecting data...")
