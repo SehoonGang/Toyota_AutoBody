@@ -3,3 +3,6 @@ open3d>=0.18
 opencv-python>=4.8
 imageio>=2.31
 tqdm>=4.66
+pyqtgraph
+PyOpenGL
+PyOpenGL_accelerate

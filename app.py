@@ -1,3 +1,4 @@
+import json
 import sys
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (    
@@ -71,7 +72,7 @@ class MainWindow(QMainWindow):
 
         sourceDataFolderRow = QHBoxLayout()
         sourceDataFolderRow.addWidget(QLabel("Source Data"))
-        self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260103\data\withobject_last")
+        self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\gsh72\toyota-auto-body\Data\ScanData\withobject\withobject_last")
         sourceDataFolderRow.addWidget(self.tbSourceDataFolderPath)
         self.btnSourceDataLoad = QPushButton("Load")
         sourceDataFolderRow.addWidget(self.btnSourceDataLoad)
@@ -79,7 +80,7 @@ class MainWindow(QMainWindow):
         
         calibrationFileRow = QHBoxLayout()
         calibrationFileRow.addWidget(QLabel("Calibration File"))
-        self.tbCalibrationFilePath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260103\cam_robot_extrinsic_0_1_hand_eye.yml")
+        self.tbCalibrationFilePath = QLineEdit(rf"C:\Users\gsh72\toyota-auto-body\Data\cam_robot_extrinsic_0_1_hand_eye.yml")
         calibrationFileRow.addWidget(self.tbCalibrationFilePath)
         self.btnCalibrationFilePath = QPushButton("Load")
         calibrationFileRow.addWidget(self.btnCalibrationFilePath)
@@ -119,12 +120,24 @@ class MainWindow(QMainWindow):
 
     def on_deep_learning_file_load(self):
         self.utils.on_load_source_data_folder(self, self.tbDeepLearningModelFilePath.text(), FileType.DeepLearningModel)
-        self.log.append(rf"load {self.tbDeepLearningModelFilePath.text()} completed.")
+        self.log.append(rf"load {self.tbDeepLearningModelFilePath.text()} completed.")        
 
     def on_merge(self):
         self.log.append("Start to merge frames")
-        pcd = self.pcd.merge_pcd(self.utils.source_data_folder_files, self.utils.calibration_file_path, "fanuc")
-        pcd = pcd.voxel_down_sample(1.0)
+        T_list, merged_pcd, circle_points_merged = self.pcd.merge_pcd(self.utils.source_data_folder_files, self.utils.calibration_file_path, "fanuc")
+
+        #변경 필요
+        json_path = r".\\data\\cad.json"
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        cad_centers_array = np.array(data["RH"]["cad_centers"], dtype=np.float32)
+
+        moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
+                                                                            CAD_CENTERS=cad_centers_array,
+                                                                            align_points=np.asarray(circle_points_merged, dtype=np.float64),
+                                                                            copy_pcd=True)
+
+        pcd = moved_merge_pcd.voxel_down_sample(1.0)
         self.set_pointcloud(pcd)
         self.log.append("merge frames complete.")
 
