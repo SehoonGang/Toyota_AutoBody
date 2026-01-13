@@ -131,9 +131,9 @@ class MainWindow(QMainWindow):
     def on_inspect(self):
         self.log.append("Inspecting data...")
 
-    def current_model(self):
+    def current_model(self):        
         return 'L' if self.radioL.isChecked() else 'R'
-
+    
     def set_pointcloud(self, pcd: o3d.geometry.PointCloud):
             pts = np.asarray(pcd.points, dtype=np.float32)
             if pcd.has_colors():
@@ -150,7 +150,7 @@ class MainWindow(QMainWindow):
 
             self.view3d.scatter = gl.GLScatterPlotItem(pos=pts, color=cols, size=2.0, pxMode=True)
             self.view3d.view.addItem(self.view3d.scatter)
-            
+
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()
