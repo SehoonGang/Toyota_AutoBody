@@ -6,3 +6,4 @@ tqdm>=4.66
 pyqtgraph
 PyOpenGL
 PyOpenGL_accelerate
+ultralytics
