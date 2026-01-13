@@ -41,7 +41,6 @@ class PCD:
 
         merged_pcd, _ = self._icp_merge(pcd_dict=pcd_dict)
         return merged_pcd
-        
 
     def _icp_merge(self, pcd_dict : dict[int, object]):
         master_frame_number = [5, 4, 1, 2, 3, 9]
