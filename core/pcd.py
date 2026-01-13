@@ -40,7 +40,8 @@ class PCD:
             T_base_cam_dict[frame_number] = T_base_cam 
 
         merged_pcd, _ = self._icp_merge(pcd_dict=pcd_dict)
-        o3d.visualization.draw_geometries([merged_pcd])
+        return merged_pcd
+        
 
     def _icp_merge(self, pcd_dict : dict[int, object]):
         master_frame_number = [5, 4, 1, 2, 3, 9]
