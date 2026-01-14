@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (    
@@ -146,15 +147,15 @@ class MainWindow(QMainWindow):
         cad_centers_array = np.array(data["LH"]["cad_centers"], dtype=np.float32)
         #=================================================
 
-        # moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
-        #                                                                     CAD_CENTERS=cad_centers_array,
-        #                                                                     align_points=np.asarray(circle_points_merged, dtype=np.float64),
-        #                                                                     copy_pcd=True)
+        moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
+                                                                            CAD_CENTERS=cad_centers_array,
+                                                                            align_points=np.asarray(circle_points_merged, dtype=np.float64),
+                                                                            copy_pcd=True)
         
-        # self.result_pcd = moved_merge_pcd
-        # self.result_T = T_to_cad
+        self.result_pcd = moved_merge_pcd
+        self.result_T = T_to_cad
 
-        pcd = merged_pcd.voxel_down_sample(1.0)
+        pcd = moved_merge_pcd.voxel_down_sample(1.0)
         self.set_pointcloud(pcd)
         self.log.append("merge frames complete.")
 
@@ -164,7 +165,7 @@ class MainWindow(QMainWindow):
 
         for i, frame in enumerate(tqdm(self.utils.source_data_folder_files, total=len(self.utils.source_data_folder_files))):
             texture_path, x_path, y_path, z_path, pose_path, mask_path = frame
-
+            frame_number = os.path.basename(texture_path).replace("_IMG_Texture_8Bit.png", "")
             X = iio.imread(x_path).astype(np.float64)
             Y = iio.imread(y_path).astype(np.float64)
             Z = iio.imread(z_path).astype(np.float64)
@@ -186,7 +187,7 @@ class MainWindow(QMainWindow):
                 Y[ys_idx, xs_idx],
                 Z[ys_idx, xs_idx]
             ], axis=1)
-
+            
             T_cam_to_world = self.T_list[i]
             T_world_to_cad = self.result_T
             T_cam_to_cad = T_world_to_cad @ T_cam_to_world
@@ -199,7 +200,7 @@ class MainWindow(QMainWindow):
             json_path = r".\\data\\cad.json"
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            cad_points  = np.array(data["RH"]["cad_welding_points"], dtype=np.float32)            
+            cad_points  = np.array(data[self.current_model()]["cad_welding_points"], dtype=np.float32)            
 
             for roi_id, center in enumerate(cad_points, start=1):
                 dist = np.linalg.norm(pts_cad - center, axis=1)
@@ -234,12 +235,12 @@ class MainWindow(QMainWindow):
 
                 results = self.seg_model(crop_img, verbose=False)
                 if len(results) == 0 or results[0].masks is None:
-                    print(f"[INFO] ROI : YOLO mask 없음 (view {i}).")
+                    print(f"[INFO] ROI : YOLO mask 없음 (view {frame_number}).")
                     continue
 
                 masks_yolo = results[0].masks.data.cpu().numpy()  # (K, Hc, Wc)
                 if masks_yolo.shape[0] == 0:
-                    print(f"[INFO] ROI : mask 개수 0 (view {i}).")
+                    print(f"[INFO] ROI : mask 개수 0 (view {frame_number}).")
                     continue
 
                 mask_bin = (masks_yolo > 0.5)
@@ -262,6 +263,28 @@ class MainWindow(QMainWindow):
 
                 if n_hole > 0:                
                     roi_hole_points_dict.setdefault(roi_id, []).append(roi_hole_pts)
+
+        pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
+        self.set_pointcloud(pcd_holes)
+
+    def roi_dict_to_pcd(self, roi_hole_points_dict: dict[int, list[np.ndarray]]) -> o3d.geometry.PointCloud:
+        all_pts = []
+        for roi_id, chunks in roi_hole_points_dict.items():
+            for pts in chunks:
+                if pts is None or len(pts) == 0:
+                    continue
+                all_pts.append(np.asarray(pts, dtype=np.float64))
+
+        if not all_pts:
+            return o3d.geometry.PointCloud()
+
+        P = np.vstack(all_pts)
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(P)
+        
+        pcd.paint_uniform_color([0.0, 1.0, 0.2])
+        return pcd
 
 
     def current_model(self):        

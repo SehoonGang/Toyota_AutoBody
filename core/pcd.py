@@ -89,7 +89,7 @@ class PCD:
 
         o3d.io.write_point_cloud(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\body.ply", merged_pcd, print_progress=True)
 
-        T_acc = T_acc_list_master + T_acc_list_source[1:]
+        T_acc = T_acc_list_master + T_acc_list_source
         T_acc_sorted = sorted(T_acc, key=lambda d: int(d["number"]))
         T_cam_to_merged_dict = {}
 
@@ -132,7 +132,7 @@ class PCD:
                         jitter_px=0.5
                     )
 
-                    self.show_ring_points_3d(xyz, p_cam)
+                    # self.show_ring_points_3d(xyz, p_cam)
 
                     if p_cam is None:
                         print(f"[CIRCLE] invalid XYZ at ({gx},{gy}) in {frame_number}")
@@ -416,11 +416,11 @@ class PCD:
             gx = rx + x_off
             gy = ry + y_off
 
-            cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
-            cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
-            cv2.imshow("final(best overall)", vis_final)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
+            # cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
+            # cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
+            # cv2.imshow("final(best overall)", vis_final)
+            # cv2.waitKey(0)
+            # cv2.destroyAllWindows()
 
             results.append((gx, gy, rr, score, arc_cov))
 
@@ -432,9 +432,9 @@ class PCD:
         if roi.size == 0:
             return []       
     
-        cv2.imshow("ROI (circle search area)", roi)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        # cv2.imshow("ROI (circle search area)", roi)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
 
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         gray_blur = cv2.GaussianBlur(gray, (7, 7), 1.5)
