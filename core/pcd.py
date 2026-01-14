@@ -15,7 +15,7 @@ class PCD:
     def __init__(self):
         return
 
-    def merge_pcd(self, source_list : str, calibration_file : str, robotType : str) :
+    def merge_pcd(self, source_list : str, calibration_file : str, robotType : str, current_model : str) :
         path_dict = {}
         pcd_dict = {}
         T_base_cam_dict = {}
@@ -26,18 +26,47 @@ class PCD:
 
             frame_number = os.path.basename(texture_path).replace("_IMG_Texture_8Bit.png", "")
             path_dict[frame_number] = (x_path, y_path, z_path, texture_path)
+            detect_circle_setting = dict(topk_hough=5,
+                                         roi_scale=2.2,
+                                         roi_half_min=60,
+                                         roi_half_max=260,
+                                         band_px=4.0,
+                                         arc_min=0.15,
+                                         dp=1.2,
+                                         minDist=140,
+                                         param1=120,
+                                         param2=24,
+                                         minRadius=50,
+                                         maxRadius=60)
             
-            arc_min = 0.15
-            if frame_number == '3' or frame_number == '5' or frame_number == '9' :
-                if frame_number == '5':
-                    arc_min = 1
-                if frame_number == '3' or frame_number == '9' :
-                    arc_min = 0.15
-                circles2d = self.find_circle_center(texture_image=texture_path, arc_min=arc_min)
-                detected_circle_centers[frame_number] = circles2d[:1]
-            else:
-                circles2d = []
-                detected_circle_centers[frame_number] = []
+            detected_circle_centers.setdefault(frame_number, [])
+            
+            if current_model == 'LH' :                
+                if frame_number == '1' :
+                    detect_circle_setting['minRadius'] = 10
+                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting,x= 1527, y= 1169, r = 100)
+                    if circles2d:
+                        detected_circle_centers[frame_number].append(circles2d[0])
+                elif frame_number == '3':
+                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x= 2110, y=1010, r=100)
+                    if circles2d:
+                        detected_circle_centers[frame_number].append(circles2d[0])
+                elif frame_number == '5':                
+                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=1166, y=844, r= 100)
+                    if circles2d:
+                        detected_circle_centers[frame_number].append(circles2d[0])
+            else :
+                if frame_number == '3':
+                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=1388, y = 976, r = 100)
+                    if circles2d:
+                        detected_circle_centers[frame_number].append(circles2d[0])
+                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=2106, y = 673, r = 100)
+                    if circles2d:
+                        detected_circle_centers[frame_number].append(circles2d[0])
+                elif frame_number == '5':
+                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x = 1172, y = 802, r=100)
+                    if circles2d:
+                        detected_circle_centers[frame_number].append(circles2d[0])
 
             pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]
             if len(pose) != 6:
@@ -58,6 +87,8 @@ class PCD:
 
         merged_pcd, T_acc_list_master, T_acc_list_source = self._icp_merge(pcd_dict=pcd_dict)
 
+        o3d.io.write_point_cloud(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\body.ply", merged_pcd, print_progress=True)
+
         T_acc = T_acc_list_master + T_acc_list_source[1:]
         T_acc_sorted = sorted(T_acc, key=lambda d: int(d["number"]))
         T_cam_to_merged_dict = {}
@@ -67,65 +98,62 @@ class PCD:
             T_cam_to_merged_dict[n] = d["Transform"] @ T_base_cam_dict[n]
         
         circle_points_merged = []
-        target_names = ['3', '5', '9'] #수정 필요
+        
         ANGLE_RANGE_BY_NAME = {
-            "3":  [(90, 270)], 
-            "5":  [(0, 360)],# 좌/우만 보고 위쪽 제외 같은 식으로 2구간 가능
-            "9":  [(30, 170)], 
+            "1": [(0, 360)],
+            "2": [(0, 360)],
+            "3": [(90, 270)], 
+            "4": [(0, 360)],# 좌/우만 보고 위쪽 제외 같은 식으로 2구간 가능
+            "5": [(30, 170)],
         }
-        for target_name in target_names:
-            if target_name not in detected_circle_centers or len(detected_circle_centers[target_name]) == 0:
-                print(f"[CIRCLE] no circle result in {target_name}")
-                continue
+        
+        for frame_number in detected_circle_centers:
+            if detected_circle_centers[frame_number] is not []:
+                if frame_number not in detected_circle_centers or len(detected_circle_centers[frame_number]) == 0:
+                    print(f"[CIRCLE] no circle result in {frame_number}")
+                    continue
+                x_path, y_path, z_path, _ = path_dict[frame_number]
+                X = iio.imread(x_path).astype(np.float32)
+                Y = iio.imread(y_path).astype(np.float32)
+                Z = iio.imread(z_path).astype(np.float32)
 
-            gx, gy, rr, score, arc = detected_circle_centers[target_name][0]            
+                for i  in range(len(detected_circle_centers[frame_number])) :
+                    gx, gy, rr, score, arc = detected_circle_centers[frame_number][i]
 
-            if target_name not in path_dict:
-                print(f"[CIRCLE] paths_dict에 {target_name} 키가 없음")
-                continue
-            if target_name not in T_cam_to_merged_dict:
-                print(f"[CIRCLE] T_cam_to_merged_dict에 {target_name} 키가 없음")
-                continue
+                    p_cam, xyz = self.estimate_center_xyz_from_circle_ring_by_name(
+                        X, Y, Z,
+                        circle_cx=gx, circle_cy=gy, circle_r=rr,
+                        name=frame_number,
+                        angle_range_by_name=ANGLE_RANGE_BY_NAME,
+                        n_samples=80,
+                        win=10,
+                        min_valid=15,
+                        agg="median",
+                        jitter_px=0.5
+                    )
 
-            x_path, y_path, z_path, _ = path_dict[target_name]
-            X = iio.imread(x_path).astype(np.float32)
-            Y = iio.imread(y_path).astype(np.float32)
-            Z = iio.imread(z_path).astype(np.float32)
+                    self.show_ring_points_3d(xyz, p_cam)
 
-            p_cam, xyz = self.estimate_center_xyz_from_circle_ring_by_name(
-                X, Y, Z,
-                circle_cx=gx, circle_cy=gy, circle_r=rr,
-                name=target_name,
-                angle_range_by_name=ANGLE_RANGE_BY_NAME,
-                n_samples=80,
-                win=10,
-                min_valid=15,
-                agg="median",
-                jitter_px=0.5
-            )
+                    if p_cam is None:
+                        print(f"[CIRCLE] invalid XYZ at ({gx},{gy}) in {frame_number}")
+                        continue
 
-            # self.show_ring_points_3d(xyz, p_cam)
+                    T_cam_to_merged = T_cam_to_merged_dict[frame_number]
+                    p_cam_h = np.array([p_cam[0], p_cam[1], p_cam[2], 1.0], dtype=np.float64)
+                    p_merged = (T_cam_to_merged @ p_cam_h)[:3]
+                    circle_points_merged.append(p_merged)
 
-            if p_cam is None:
-                print(f"[CIRCLE] invalid XYZ at ({gx},{gy}) in {target_name}")
-                continue
+                geoms = [merged_pcd]
+                if len(circle_points_merged) > 0:
+                    circle_pcd = self.make_points_pcd(np.asarray(circle_points_merged), color=(0, 1, 0.2))
+                    geoms.append(circle_pcd)
+                # o3d.visualization.draw_geometries(geoms)
 
-            T_cam_to_merged = T_cam_to_merged_dict[target_name]
-            p_cam_h = np.array([p_cam[0], p_cam[1], p_cam[2], 1.0], dtype=np.float64)
-            p_merged = (T_cam_to_merged @ p_cam_h)[:3]
-            circle_points_merged.append(p_merged)
-
-            geoms = [merged_pcd]
-            if len(circle_points_merged) > 0:
-                circle_pcd = self.make_points_pcd(np.asarray(circle_points_merged), color=(0, 1, 0.2))
-                geoms.append(circle_pcd)
-            # o3d.visualization.draw_geometries(geoms)
-
-            T_list = [T_cam_to_merged_dict[str(d["number"])] for d in T_acc_sorted]
+                T_list = [T_cam_to_merged_dict[str(d["number"])] for d in T_acc_sorted]
         return T_list, merged_pcd, circle_points_merged
 
     def _icp_merge(self, pcd_dict : dict[int, object]):
-        master_frame_number = [5, 4, 1, 2, 3, 9]
+        master_frame_number = [1, 2, 3, 4, 5]
 
         master_merge_frame_list = [{"number" : str(n), "pcd" : pcd_dict[str(n)]} for n in master_frame_number]
         source_merge_frame_list = []
@@ -324,31 +352,31 @@ class PCD:
         pcd.colors = o3d.utility.Vector3dVector(cols.astype(np.float64))
         return pcd
     
-    def find_circle_center(self, texture_image, arc_min = 0.15) :
-        detect_circle_setting = dict(topk_hough=5,
-                                     roi_scale=2.2,
-                                     roi_half_min=60,
-                                     roi_half_max=260,
-                                     band_px=4.0,
-                                     arc_min=0.15,
-                                     dp=1.2,
-                                     minDist=140,
-                                     param1=120,
-                                     param2=24,
-                                     minRadius=50,
-                                     maxRadius=60)
-        detect_circle_setting["arc_min"] = arc_min
-        
+    def crop_roi_center_px(self, img: np.ndarray, cx: int, cy: int, r_px: int) -> Tuple[np.ndarray, int, int]:
+        """
+        (cx,cy)를 중심으로 r_px 반경의 사각 ROI를 crop.
+        return: (roi_img, x_off, y_off)  # roi의 좌상단 오프셋
+        """
+        h, w = img.shape[:2]
+        x1 = max(cx - r_px, 0)
+        y1 = max(cy - r_px, 0)
+        x2 = min(cx + r_px + 1, w)
+        y2 = min(cy + r_px + 1, h)
+        roi = img[y1:y2, x1:x2].copy()
+        return roi, x1, y1
+    
+    def find_circle_center(self, texture_image, detect_circle_setting, x, y, r) :        
         img = cv2.imread(texture_image, cv2.IMREAD_COLOR)
         if img is None:
             raise FileNotFoundError(f"Failed to read image: {texture_image}")
         
-        circles = self._get_circle_candidates(img, dp=detect_circle_setting['dp'],
+        circles = self._get_circle_candidates(img, seed_x=x, seed_y=y, crop_r_px=r,
+                                                  dp=detect_circle_setting['dp'],
                                                   minDist=detect_circle_setting["minDist"],
                                                   param1=detect_circle_setting["param1"], 
                                                   param2=detect_circle_setting["param2"], 
                                                   minRadius=detect_circle_setting["minRadius"], 
-                                                  maxRadius=detect_circle_setting["maxRadius"]
+                                                  maxRadius=detect_circle_setting["maxRadius"],
         )
         if circles is None or len(circles) == 0:
             return []
@@ -388,20 +416,29 @@ class PCD:
             gx = rx + x_off
             gy = ry + y_off
 
-            # cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
-            # cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
-            # cv2.imshow("final(best overall)", vis_final)
-            # cv2.waitKey(0)
-            # cv2.destroyAllWindows()
+            cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
+            cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
+            cv2.imshow("final(best overall)", vis_final)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
 
             results.append((gx, gy, rr, score, arc_cov))
 
         results.sort(key=lambda t: t[3], reverse=True)  # score desc
         return results
     
-    def _get_circle_candidates(self, img_bgr, dp=1.2, minDist=140, param1=120, param2=24, minRadius=50, maxRadius=60):
-        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    def _get_circle_candidates(self, img_bgr, seed_x: int, seed_y: int, crop_r_px: int,  dp=1.2, minDist=140, param1=120, param2=24, minRadius=50, maxRadius=60):
+        roi, x_off, y_off = self.crop_roi_center_px(img_bgr, seed_x, seed_y, int(crop_r_px))
+        if roi.size == 0:
+            return []       
+    
+        cv2.imshow("ROI (circle search area)", roi)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         gray_blur = cv2.GaussianBlur(gray, (7, 7), 1.5)
+        
         circles = cv2.HoughCircles(
             gray_blur,
             cv2.HOUGH_GRADIENT,
@@ -417,6 +454,8 @@ class PCD:
             return []
 
         circles = circles[0].astype(np.float32)
+        circles[:, 0] += x_off
+        circles[:, 1] += y_off
         return circles
         
     def _get_center_points(self, circles:np.ndarray, topk:int = 10):
@@ -855,9 +894,8 @@ class PCD:
 
         # dummy records (함수 시그니처 맞추기용) - 실제로는 PCD 변환만 필요
         dummy_records = [
-            {"index": 0, "center": align_points[0].tolist()},
-            {"index": 1, "center": align_points[1].tolist()},
-            {"index": 2, "center": align_points[2].tolist()},
+            {"index": i, "center": align_points[i].tolist()}
+            for i in range(align_points.shape[0])
         ]
 
         # ✅ measured(=merged) -> CAD 변환 T 구하기

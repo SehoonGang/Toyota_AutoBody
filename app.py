@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
         self.radioGroup = QButtonGroup(self)
         self.radioL = QRadioButton("L Model")
         self.radioR = QRadioButton("R Model")
-        self.radioL.setChecked(True)
+        self.radioR.setChecked(True)
         self.radioGroup.addButton(self.radioL)
         self.radioGroup.addButton(self.radioR) 
         radioRow = QHBoxLayout()
@@ -79,7 +79,7 @@ class MainWindow(QMainWindow):
 
         sourceDataFolderRow = QHBoxLayout()
         sourceDataFolderRow.addWidget(QLabel("Source Data"))
-        self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\gsh72\toyota-auto-body\Data\ScanData\withobject\withobject_last")
+        self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\RH")
         sourceDataFolderRow.addWidget(self.tbSourceDataFolderPath)
         self.btnSourceDataLoad = QPushButton("Load")
         sourceDataFolderRow.addWidget(self.btnSourceDataLoad)
@@ -87,7 +87,7 @@ class MainWindow(QMainWindow):
         
         calibrationFileRow = QHBoxLayout()
         calibrationFileRow.addWidget(QLabel("Calibration File"))
-        self.tbCalibrationFilePath = QLineEdit(rf"C:\Users\gsh72\toyota-auto-body\Data\cam_robot_extrinsic_0_1_hand_eye.yml")
+        self.tbCalibrationFilePath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\cam_robot_extrinsic_0_1_hand_eye.yml")
         calibrationFileRow.addWidget(self.tbCalibrationFilePath)
         self.btnCalibrationFilePath = QPushButton("Load")
         calibrationFileRow.addWidget(self.btnCalibrationFilePath)
@@ -95,7 +95,7 @@ class MainWindow(QMainWindow):
 
         deepLearningFileRow = QHBoxLayout()
         deepLearningFileRow.addWidget(QLabel("Deep Learning"))
-        self.tbDeepLearningModelFilePath = QLineEdit(rf"C:\Users\gsh72\toyota-auto-body\Data\yolo11x.pt")        
+        self.tbDeepLearningModelFilePath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\best.pt")        
         deepLearningFileRow.addWidget(self.tbDeepLearningModelFilePath)
         self.btnDeepLearningFilePath = QPushButton("Load")
         deepLearningFileRow.addWidget(self.btnDeepLearningFilePath)
@@ -133,25 +133,28 @@ class MainWindow(QMainWindow):
 
     def on_merge(self):
         self.log.append("Start to merge frames")
-        T_list, merged_pcd, circle_points_merged = self.pcd.merge_pcd(self.utils.source_data_folder_files, self.utils.calibration_file_path, "fanuc")
+        T_list, merged_pcd, circle_points_merged = self.pcd.merge_pcd(self.utils.source_data_folder_files, self.utils.calibration_file_path, "fanuc", self.current_model())
         self.T_list = T_list
+
+        T_array = np.stack(T_list, axis=0)
+        np.save(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\body.npy", T_array)
 
         #변경 필요 ========================================
         json_path = r".\\data\\cad.json"
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        cad_centers_array = np.array(data["RH"]["cad_centers"], dtype=np.float32)
+        cad_centers_array = np.array(data["LH"]["cad_centers"], dtype=np.float32)
         #=================================================
 
-        moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
-                                                                            CAD_CENTERS=cad_centers_array,
-                                                                            align_points=np.asarray(circle_points_merged, dtype=np.float64),
-                                                                            copy_pcd=True)
+        # moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
+        #                                                                     CAD_CENTERS=cad_centers_array,
+        #                                                                     align_points=np.asarray(circle_points_merged, dtype=np.float64),
+        #                                                                     copy_pcd=True)
         
-        self.result_pcd = moved_merge_pcd
-        self.result_T = T_to_cad
+        # self.result_pcd = moved_merge_pcd
+        # self.result_T = T_to_cad
 
-        pcd = moved_merge_pcd.voxel_down_sample(1.0)
+        pcd = merged_pcd.voxel_down_sample(1.0)
         self.set_pointcloud(pcd)
         self.log.append("merge frames complete.")
 
@@ -262,7 +265,7 @@ class MainWindow(QMainWindow):
 
 
     def current_model(self):        
-        return 'L' if self.radioL.isChecked() else 'R'
+        return 'LH' if self.radioL.isChecked() else 'RH'
     
     def set_pointcloud(self, pcd: o3d.geometry.PointCloud):
             pts = np.asarray(pcd.points, dtype=np.float32)
