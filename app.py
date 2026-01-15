@@ -18,6 +18,10 @@ from tqdm import tqdm
 import imageio.v2 as iio
 import cv2
 from ultralytics import YOLO
+import re
+
+import matplotlib.pyplot as plt
+import cv2
 
 class PointCloudView(QWidget):
     def __init__(self, parent=None):
@@ -117,6 +121,7 @@ class MainWindow(QMainWindow):
         self.btnDeepLearningFilePath.clicked.connect(self.on_deep_learning_file_load)        
         self.btnMerge.clicked.connect(self.on_merge)
         self.btnInspect.clicked.connect(self.on_inspect)
+        
 
     def on_source_data_load(self):        
         self.utils.on_load_source_data_folder(self.tbSourceDataFolderPath.text(), FileType.Image)
@@ -144,7 +149,7 @@ class MainWindow(QMainWindow):
         json_path = r".\\data\\cad.json"
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        cad_centers_array = np.array(data["LH"]["cad_centers"], dtype=np.float32)
+        cad_centers_array = np.array(data[self.current_model()]["cad_centers"], dtype=np.float32)
         #=================================================
 
         moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
@@ -155,7 +160,7 @@ class MainWindow(QMainWindow):
         self.result_pcd = moved_merge_pcd
         self.result_T = T_to_cad
 
-        pcd = moved_merge_pcd.voxel_down_sample(1.0)
+        pcd = moved_merge_pcd.voxel_down_sample(0.5)
         self.set_pointcloud(pcd)
         self.log.append("merge frames complete.")
 
@@ -163,8 +168,27 @@ class MainWindow(QMainWindow):
         self.log.append("Inspecting data...")
         roi_hole_points_dict = {}
 
-        for i, frame in enumerate(tqdm(self.utils.source_data_folder_files, total=len(self.utils.source_data_folder_files))):
+
+        tmp_test = [self.result_pcd]
+        tmp_test = []
+
+        def extract_index(group):
+            """
+            group[0] 에서 앞 숫자 추출
+            예: '...\\10_IMG_Texture_8Bit.png' -> 10
+            """
+            fname = os.path.basename(group[0])
+            m = re.match(r"(\d+)_", fname)
+            return int(m.group(1)) if m else -1
+
+        source_data_folder_files_sort = sorted(self.utils.source_data_folder_files, key=extract_index)
+
+
+        for i, frame in enumerate(tqdm(source_data_folder_files_sort, total=len(source_data_folder_files_sort))):
+            pcd = PCD()
             texture_path, x_path, y_path, z_path, pose_path, mask_path = frame
+
+            pts_cam = pcd._make_cam_pcd(x_path=x_path, y_path=y_path, z_path=z_path,texture_path=texture_path, mask_path=mask_path)
             frame_number = os.path.basename(texture_path).replace("_IMG_Texture_8Bit.png", "")
             X = iio.imread(x_path).astype(np.float64)
             Y = iio.imread(y_path).astype(np.float64)
@@ -191,7 +215,14 @@ class MainWindow(QMainWindow):
             T_cam_to_world = self.T_list[i]
             T_world_to_cad = self.result_T
             T_cam_to_cad = T_world_to_cad @ T_cam_to_world
-            pts_cad = self.transform_points(pts_cam, T_cam_to_cad)
+
+            # pts_cad = self.transform_points(pts_cam, T_cam_to_cad)   
+            # pts_cad = self.transform_points(pts_cad, T_cam_to_world)
+
+            pts_cam = self.transform_points(pts_cam, T_cam_to_world)   
+            pts_cam = self.transform_points(pts_cam, T_world_to_cad)
+            # pts_cam.transform(T_cam_to_world).transform(T_world_to_cad)
+            # pts_cam.transform(T_cam_to_world)
 
             image_for_seg = cv2.imread(texture_path, cv2.IMREAD_COLOR)
             img_h, img_w, _ = image_for_seg.shape
@@ -201,12 +232,37 @@ class MainWindow(QMainWindow):
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             cad_points  = np.array(data[self.current_model()]["cad_welding_points"], dtype=np.float32)            
+            pcd_cad = o3d.geometry.PointCloud()
+            pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
+            # pcd_cad.paint_uniform_color([1.0, 0.0, 0.0])  # ✅ 빨강
+
+            # self.set_pointcloud(pcd_cad)  # ✅ 점 크게
+            all_min_dist = 9999
+            all_center = "None"           
+            # pts_cam = np.array(pts_cam.points)
+            pp = np.asarray(pts_cam, dtype=np.float64).reshape(-1, 3)
+            pcd_pts_cad = o3d.geometry.PointCloud()
+            pcd_pts_cad.points = o3d.utility.Vector3dVector(pp)
+
+            # pcd_pts_cad.paint_uniform_color([1.0, 0.0, 0.0])  # 빨강(원하면 색 바꿔)
+
+            geoms = [self.result_pcd, pcd_pts_cad]
+            tmp_test.append(pcd_pts_cad)
+            # o3d.visualization.draw_geometries(geoms)
 
             for roi_id, center in enumerate(cad_points, start=1):
-                dist = np.linalg.norm(pts_cad - center, axis=1)
-                mask_roi_3d = dist <= 4
-                num_roi_pts = np.count_nonzero(mask_roi_3d)
+                r = 10
+                r_max = 30.0
+                min_pts = 200
 
+                dist = np.linalg.norm(pts_cam - center, axis=1)
+                while True:
+                    mask_roi_3d = dist <= r
+                    num_roi_pts = int(mask_roi_3d.sum())
+
+                    if num_roi_pts >= min_pts or r >= r_max:
+                        break
+                    r *= 1.5    
                 if num_roi_pts == 0:
                     continue
 
@@ -229,11 +285,12 @@ class MainWindow(QMainWindow):
                 if crop_img.size == 0:
                     continue
                 
-                ch, cw, _ = crop_img.shape
-                if ch < 16 or cw < 16:                
-                    continue
-
-                results = self.seg_model(crop_img, verbose=False)
+                ch, cw  = crop_img.shape[:2]
+                # if ch < 16 or cw < 16:                
+                #     continue
+                
+                results = self.seg_model(crop_img, device='cpu', verbose=False)
+                
                 if len(results) == 0 or results[0].masks is None:
                     print(f"[INFO] ROI : YOLO mask 없음 (view {frame_number}).")
                     continue
@@ -243,7 +300,7 @@ class MainWindow(QMainWindow):
                     print(f"[INFO] ROI : mask 개수 0 (view {frame_number}).")
                     continue
 
-                mask_bin = (masks_yolo > 0.5)
+                mask_bin = (masks_yolo > 0.35)
                 full_mask_local = np.any(mask_bin, axis=0)  # (Hm, Wm) bool
 
                 mask_resized = cv2.resize(
@@ -258,14 +315,50 @@ class MainWindow(QMainWindow):
                 mask_on_pixels = mask_full[ys_idx, xs_idx]  # (N,) bool
                 mask_hole = mask_on_pixels & mask_roi_3d
 
-                roi_hole_pts = pts_cad[mask_hole]
+                roi_hole_pts = pts_cam[mask_hole]
                 n_hole = roi_hole_pts.shape[0]
 
                 if n_hole > 0:                
-                    roi_hole_points_dict.setdefault(roi_id, []).append(roi_hole_pts)
+                    roi_hole_points_dict.setdefault(roi_id, []).append(roi_hole_pts)                
 
         pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
+        pcd_holes.paint_uniform_color([1.0, 0.0, 0.0])
+        pcd_base = self.result_pcd.voxel_down_sample(0.5)
+        vis = o3d.visualization.Visualizer()
+        vis.create_window()
+
+        vis.add_geometry(pcd_base)
+        vis.add_geometry(pcd_holes)
+
+        opt = vis.get_render_option()
+        opt.point_size = 4.0  # 필요하면 8~12까지 키워
+
+        vis.run()
+        vis.destroy_window()
+
         self.set_pointcloud(pcd_holes)
+
+    def set_pointcloud(self, pcd: o3d.geometry.PointCloud, *, size: float = 15.0):
+        pts = np.asarray(pcd.points, dtype=np.float32)
+
+        if pcd.has_colors():
+            cols = np.asarray(pcd.colors, dtype=np.float32)
+            if cols.max() > 1.0:
+                cols = cols / 255.0
+            alpha = np.ones((cols.shape[0], 1), dtype=np.float32)
+            cols = np.concatenate([cols, alpha], axis=1)
+        else:
+            cols = np.ones((pts.shape[0], 4), dtype=np.float32) * 0.8
+            cols[:, 3] = 1.0
+
+        # ✅ 기존 scatter 제거 (중복 렌더 방지)
+        if getattr(self.view3d, "scatter", None) is not None:
+            self.view3d.view.removeItem(self.view3d.scatter)
+            self.view3d.scatter = None
+
+        # ✅ 점 크기 키우기
+        self.view3d.scatter = gl.GLScatterPlotItem(pos=pts, color=cols, size=float(size), pxMode=True)
+        self.view3d.view.addItem(self.view3d.scatter)
 
     def roi_dict_to_pcd(self, roi_hole_points_dict: dict[int, list[np.ndarray]]) -> o3d.geometry.PointCloud:
         all_pts = []

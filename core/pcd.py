@@ -1,4 +1,5 @@
 from itertools import permutations
+import json
 import os
 import re
 from tqdm import tqdm
@@ -8,7 +9,7 @@ import open3d as o3d
 import cv2
 import copy
 from typing import Any, Dict, List, Optional, Tuple
-
+from .util.circleCenter import fit_circle_center_3d
 CircleResult = Tuple[int, int, float, float, float]
 
 class PCD:
@@ -20,6 +21,11 @@ class PCD:
         pcd_dict = {}
         T_base_cam_dict = {}
         detected_circle_centers = {}
+
+
+
+        
+
         
         for frame in tqdm(source_list, total = len(source_list)) :
             texture_path, x_path, y_path, z_path, pose_path, mask_path = frame
@@ -72,6 +78,11 @@ class PCD:
             if len(pose) != 6:
                 print("[POSE WARN]", frame_number, "len=", len(pose), pose[:10], "path=", pose_path)
             pose = pose[:6]
+
+
+            
+
+
             pcd_cam = self._make_cam_pcd(x_path, y_path, z_path, texture_path, mask_path)
 
             robotType = robotType.lower()
@@ -80,12 +91,70 @@ class PCD:
 
             T_tcp_cam = self._transform_calibration_file_to_T_4x4(calibration_file)
             T_base_cam = T_base_tcp @ T_tcp_cam
+
             pcd_base = copy.deepcopy(pcd_cam)
             pcd_base.transform(T_base_cam)
             pcd_dict[frame_number] = pcd_base
             T_base_cam_dict[frame_number] = T_base_cam 
+ 
+
 
         merged_pcd, T_acc_list_master, T_acc_list_source = self._icp_merge(pcd_dict=pcd_dict)
+
+        
+        """
+        temp
+        """
+        print(" Merged PCD")
+        # o3d.visualization.draw_geometries(merged_pcd)
+
+        def extract_index(group):
+            """
+            group[0] 에서 앞 숫자 추출
+            예: '...\\10_IMG_Texture_8Bit.png' -> 10
+            """
+            fname = os.path.basename(group[0])
+            m = re.match(r"(\d+)_", fname)
+            return int(m.group(1)) if m else -1
+
+        source_list = sorted(source_list, key=extract_index)
+
+        
+        
+        T_list = T_acc_list_master + T_acc_list_source
+        # tmp_mere_list =[]
+
+        T_List_v2 = []
+        for idx, source in enumerate(source_list):
+            T_base_cam = T_base_cam_dict[str(idx+1)]
+            
+            T_acc = T_list[idx]['Transform']
+            # texture_path, x_path, y_path, z_path, pose_path, mask_path = source
+            # pcd_cam = self._make_cam_pcd(x_path, y_path, z_path, texture_path, mask_path)
+            # tmp_pcd = pcd_cam.transform(T_base_cam).transform(T_acc)
+
+            # tmp_pcd = pcd_cam.transform(T_acc @T_base_cam)
+            T_List_v2.append(T_acc @T_base_cam)
+            
+            # tmp_mere_list.append(tmp_pcd)
+        # o3d.visualization.draw_geometries(tmp_mere_list)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         o3d.io.write_point_cloud(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\body.ply", merged_pcd, print_progress=True)
 
@@ -96,61 +165,84 @@ class PCD:
         for d in T_acc_sorted:
             n = str(d["number"])            
             T_cam_to_merged_dict[n] = d["Transform"] @ T_base_cam_dict[n]
-        
+
+
         circle_points_merged = []
         
         ANGLE_RANGE_BY_NAME = {
             "1": [(0, 360)],
             "2": [(0, 360)],
-            "3": [(90, 270)], 
+            "3": [(0, 360)], 
             "4": [(0, 360)],# 좌/우만 보고 위쪽 제외 같은 식으로 2구간 가능
-            "5": [(30, 170)],
+            "5": [(0, 360)],
         }
         
         for frame_number in detected_circle_centers:
-            if detected_circle_centers[frame_number] is not []:
-                if frame_number not in detected_circle_centers or len(detected_circle_centers[frame_number]) == 0:
-                    print(f"[CIRCLE] no circle result in {frame_number}")
+            if not detected_circle_centers[frame_number]:
+                continue
+
+            x_path, y_path, z_path, _ = path_dict[frame_number]
+            X = iio.imread(x_path).astype(np.float32)
+            Y = iio.imread(y_path).astype(np.float32)
+            Z = iio.imread(z_path).astype(np.float32)
+
+            for i  in range(len(detected_circle_centers[frame_number])) :
+                gx, gy, rr, score, arc = detected_circle_centers[frame_number][i]
+
+                p_cam, xyz = self.estimate_center_xyz_from_circle_ring_by_name(
+                    X, Y, Z,
+                    circle_cx=gx, circle_cy=gy, circle_r=rr,
+                    name=frame_number,
+                    angle_range_by_name=ANGLE_RANGE_BY_NAME,
+                    n_samples=80,
+                    win=10,
+                    min_valid=15,
+                    agg="median",
+                    jitter_px=0.5
+                )
+
+
+                if p_cam is None:
+                    print(f"[CIRCLE] invalid XYZ at ({gx},{gy}) in {frame_number}")
                     continue
-                x_path, y_path, z_path, _ = path_dict[frame_number]
-                X = iio.imread(x_path).astype(np.float32)
-                Y = iio.imread(y_path).astype(np.float32)
-                Z = iio.imread(z_path).astype(np.float32)
 
-                for i  in range(len(detected_circle_centers[frame_number])) :
-                    gx, gy, rr, score, arc = detected_circle_centers[frame_number][i]
+                # self.show_ring_points_3d(xyz, p_cam)
 
-                    p_cam, xyz = self.estimate_center_xyz_from_circle_ring_by_name(
-                        X, Y, Z,
-                        circle_cx=gx, circle_cy=gy, circle_r=rr,
-                        name=frame_number,
-                        angle_range_by_name=ANGLE_RANGE_BY_NAME,
-                        n_samples=80,
-                        win=10,
-                        min_valid=15,
-                        agg="median",
-                        jitter_px=0.5
-                    )
+                T_cam_to_merged = T_cam_to_merged_dict[frame_number]
+                p_cam_h = np.array([p_cam[0], p_cam[1], p_cam[2], 1.0], dtype=np.float64)
+                p_merged = (T_cam_to_merged @ p_cam_h)[:3]
+                circle_points_merged.append(p_merged)
 
-                    # self.show_ring_points_3d(xyz, p_cam)
+            # geoms = [merged_pcd]
+            # json_path = r".\\data\\cad.json"
+            # with open(json_path, "r", encoding="utf-8") as f:
+            #     data = json.load(f)
+            # cad_points  = np.array(data["RH"]["cad_centers"], dtype=np.float32)
+            # cad_points = np.asarray(cad_points, dtype=np.float64).reshape(-1, 3)
+            # for p in cad_points:
+            #     sph = o3d.geometry.TriangleMesh.create_sphere(radius=10.0)  # 반경 조절
+            #     sph.translate(p)
+            #     sph.paint_uniform_color([1.0, 0.0, 0.0])
+            #     geoms.append(sph)
 
-                    if p_cam is None:
-                        print(f"[CIRCLE] invalid XYZ at ({gx},{gy}) in {frame_number}")
-                        continue
+            # if len(circle_points_merged) > 0:
+            #     circle_pcd = self.make_points_pcd(np.asarray(circle_points_merged), color=(0, 1, 0.2))
+            #     geoms.append(circle_pcd)
+            # o3d.visualization.draw_geometries(geoms)
 
-                    T_cam_to_merged = T_cam_to_merged_dict[frame_number]
-                    p_cam_h = np.array([p_cam[0], p_cam[1], p_cam[2], 1.0], dtype=np.float64)
-                    p_merged = (T_cam_to_merged @ p_cam_h)[:3]
-                    circle_points_merged.append(p_merged)
+        # T_list = [T_cam_to_merged_dict[str(d["number"])] for d in T_acc_sorted]
 
-                geoms = [merged_pcd]
-                if len(circle_points_merged) > 0:
-                    circle_pcd = self.make_points_pcd(np.asarray(circle_points_merged), color=(0, 1, 0.2))
-                    geoms.append(circle_pcd)
-                # o3d.visualization.draw_geometries(geoms)
+        T_list = [
+            v for _, v in sorted(
+                T_cam_to_merged_dict.items(),
+                key=lambda kv: int(kv[0])
+            )
+        ]
 
-                T_list = [T_cam_to_merged_dict[str(d["number"])] for d in T_acc_sorted]
-        return T_list, merged_pcd, circle_points_merged
+
+        # return T_list, merged_pcd, circle_points_merged
+        
+        return T_List_v2, merged_pcd, circle_points_merged
 
     def _icp_merge(self, pcd_dict : dict[int, object]):
         master_frame_number = [1, 2, 3, 4, 5]
@@ -164,7 +256,7 @@ class PCD:
             source_merge_frame_list.append({"number" : frame_number, "pcd" : pcd_dict[frame_number]})
         merged_master_frames, T_acc_master_list = self._icp_merge_master_frames(master_frames=master_merge_frame_list)
         merged_all, T_acc_source_list = self._icp_merge_source_frames(merged_master=merged_master_frames, source_frames=source_merge_frame_list)
-
+        print("align finish")
         return merged_all, T_acc_master_list, T_acc_source_list
     
     def _icp_merge_master_frames(self, master_frames):
@@ -257,6 +349,8 @@ class PCD:
 
             if corr == 0:
                 break
+        print("")
+        
 
         return last, T
 
@@ -609,8 +703,10 @@ class PCD:
             return None
 
         xyz = np.stack(xyz_list, axis=0)
-        xyz = self.filter_ring_outliers_by_radial_mad(xyz, k=3.0, min_keep=min_valid)
-        center3d = self.fit_circle_center_3d_from_ring_points(xyz)
+        # xyz = self.filter_ring_outliers_by_radial_mad(xyz, k=3.0, min_keep=min_valid)
+        # center3d = self.fit_circle_center_3d_from_ring_points(xyz)
+
+        center3d = fit_circle_center_3d(xyz_list)
         if center3d is None:
             return None, xyz
         return center3d, xyz
@@ -850,6 +946,8 @@ class PCD:
         estimate_center_xyz_from_circle_ring_by_name(..., return_ring=True)로 받은
         ring_pts3d를 그대로 3D로 보여준다.
         """
+        print("----------------------------------")
+
         if ring_pts3d is None or len(ring_pts3d) == 0:
             print("[SHOW] ring_pts3d is empty.")
             return
@@ -1030,3 +1128,51 @@ class PCD:
         d = a - b
         per = np.linalg.norm(d, axis=1)
         return float(np.sqrt(np.mean(per ** 2)))
+    
+    def denoise_by_dbscan_keep_big_clusters(self,
+        pcd: o3d.geometry.PointCloud,
+        eps: float = 8.0,
+        min_points: int = 30,
+        keep_top_k: int = 1,
+        min_cluster_size: int | None = None,
+    ):
+        """
+        eps: 같은 군집으로 볼 거리(단위는 pcd 좌표 단위: 보통 mm)
+        min_points: 군집 코어 포인트 기준
+        keep_top_k: 가장 큰 군집 k개만 유지
+        min_cluster_size: 이 값보다 작은 군집은 제거(keep_top_k 대신/추가로 사용 가능)
+
+        return: (filtered_pcd, labels)
+        """
+        if len(pcd.points) == 0:
+            return pcd, np.array([], dtype=int)
+
+        labels = np.array(pcd.cluster_dbscan(eps=eps, min_points=min_points, print_progress=False))
+        # labels: -1 = noise
+
+        valid = labels >= 0
+        if not np.any(valid):
+            # 전부 노이즈로 떨어짐 → 파라미터가 너무 타이트
+            return pcd.select_by_index([], invert=False), labels
+
+        # 각 클러스터 크기 계산
+        max_label = labels.max()
+        counts = np.bincount(labels[valid], minlength=max_label + 1)
+
+        # 유지할 클러스터 선택
+        keep = np.zeros_like(labels, dtype=bool)
+
+        if min_cluster_size is not None:
+            good_ids = np.where(counts >= int(min_cluster_size))[0]
+            for cid in good_ids:
+                keep |= (labels == cid)
+        else:
+            # 큰 순서대로 top-k
+            top_ids = np.argsort(counts)[::-1][:int(keep_top_k)]
+            for cid in top_ids:
+                keep |= (labels == cid)
+
+        idx_keep = np.where(keep)[0].tolist()
+        filtered = pcd.select_by_index(idx_keep)
+
+        return filtered, labels
