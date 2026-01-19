@@ -138,30 +138,22 @@ class MainWindow(QMainWindow):
         self.seg_model = YOLO(self.tbDeepLearningModelFilePath.text())
 
     def on_merge(self):
-        self.log.append("Start to merge frames")
-        T_list, merged_pcd, circle_points_merged = self.pcd.merge_pcd(self.utils.source_data_folder_files, self.utils.calibration_file_path, "fanuc", self.current_model())
+        self.log.append("[INFO] Start to merge frames")
+        T_list, merged_pcd, reference_pcd = self.pcd.merge_pcd(self.utils.source_data_folder_files,
+                                                               self.utils.calibration_file_path,
+                                                               "fanuc", self.current_model())
         self.T_list = T_list
-
-        T_array = np.stack(T_list, axis=0)
-        np.save(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\body.npy", T_array)
-
-        #변경 필요 ========================================
-        json_path = r".\\data\\cad.json"
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        cad_centers_array = np.array(data[self.current_model()]["cad_centers"], dtype=np.float32)
-        #=================================================
+        cad_centers_array = np.array(self.utils.cad_data[self.current_model()]["cad_centers"], dtype=np.float32)
 
         moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
                                                                             CAD_CENTERS=cad_centers_array,
-                                                                            align_points=np.asarray(circle_points_merged, dtype=np.float64),
+                                                                            align_points=np.asarray(reference_pcd, dtype=np.float64),
                                                                             copy_pcd=True)
         
         self.result_pcd = moved_merge_pcd
         self.result_T = T_to_cad
 
-        pcd = moved_merge_pcd.voxel_down_sample(0.5)
-        self.set_pointcloud(pcd)
+        self.set_pointcloud(moved_merge_pcd)
         self.log.append("merge frames complete.")
 
     def on_inspect(self):
@@ -338,7 +330,8 @@ class MainWindow(QMainWindow):
 
         self.set_pointcloud(pcd_holes)
 
-    def set_pointcloud(self, pcd: o3d.geometry.PointCloud, *, size: float = 15.0):
+    def set_pointcloud(self, pcd: o3d.geometry.PointCloud, *, size: float = 15.0, sampling_rate : 0.5):
+        pcd = pcd.voxel_down_sample(sampling_rate)
         pts = np.asarray(pcd.points, dtype=np.float32)
 
         if pcd.has_colors():

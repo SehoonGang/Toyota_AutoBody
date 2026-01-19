@@ -21,29 +21,16 @@ class PCD:
         pcd_dict = {}
         T_base_cam_dict = {}
         detected_circle_centers = {}
-
-
-
-        
-
         
         for frame in tqdm(source_list, total = len(source_list)) :
             texture_path, x_path, y_path, z_path, pose_path, mask_path = frame
 
             frame_number = os.path.basename(texture_path).replace("_IMG_Texture_8Bit.png", "")
             path_dict[frame_number] = (x_path, y_path, z_path, texture_path)
-            detect_circle_setting = dict(topk_hough=5,
-                                         roi_scale=2.2,
-                                         roi_half_min=60,
-                                         roi_half_max=260,
-                                         band_px=4.0,
-                                         arc_min=0.15,
-                                         dp=1.2,
-                                         minDist=140,
-                                         param1=120,
-                                         param2=24,
-                                         minRadius=50,
-                                         maxRadius=60)
+            detect_circle_setting = dict(topk_hough=5, roi_scale=2.2, roi_half_min=60,
+                                         roi_half_max=260, band_px=4.0, arc_min=0.15,
+                                         dp=1.2, minDist=140, param1=120,
+                                         param2=24, minRadius=50, maxRadius=60)
             
             detected_circle_centers.setdefault(frame_number, [])
             
@@ -74,15 +61,8 @@ class PCD:
                     if circles2d:
                         detected_circle_centers[frame_number].append(circles2d[0])
 
-            pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]
-            if len(pose) != 6:
-                print("[POSE WARN]", frame_number, "len=", len(pose), pose[:10], "path=", pose_path)
+            pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]            
             pose = pose[:6]
-
-
-            
-
-
             pcd_cam = self._make_cam_pcd(x_path, y_path, z_path, texture_path, mask_path)
 
             robotType = robotType.lower()
@@ -95,66 +75,23 @@ class PCD:
             pcd_base = copy.deepcopy(pcd_cam)
             pcd_base.transform(T_base_cam)
             pcd_dict[frame_number] = pcd_base
-            T_base_cam_dict[frame_number] = T_base_cam 
- 
+            T_base_cam_dict[frame_number] = T_base_cam
 
-
-        merged_pcd, T_acc_list_master, T_acc_list_source = self._icp_merge(pcd_dict=pcd_dict)
-
+        merged_pcd, T_acc_list_master, T_acc_list_source = self._icp_merge(pcd_dict=pcd_dict)        
         
-        """
-        temp
-        """
-        print(" Merged PCD")
-        # o3d.visualization.draw_geometries(merged_pcd)
-
-        def extract_index(group):
-            """
-            group[0] 에서 앞 숫자 추출
-            예: '...\\10_IMG_Texture_8Bit.png' -> 10
-            """
+        def extract_index(group):            
             fname = os.path.basename(group[0])
             m = re.match(r"(\d+)_", fname)
             return int(m.group(1)) if m else -1
-
-        source_list = sorted(source_list, key=extract_index)
-
         
+        source_list = sorted(source_list, key=extract_index)       
         
         T_list = T_acc_list_master + T_acc_list_source
-        # tmp_mere_list =[]
-
         T_List_v2 = []
         for idx, source in enumerate(source_list):
             T_base_cam = T_base_cam_dict[str(idx+1)]
-            
             T_acc = T_list[idx]['Transform']
-            # texture_path, x_path, y_path, z_path, pose_path, mask_path = source
-            # pcd_cam = self._make_cam_pcd(x_path, y_path, z_path, texture_path, mask_path)
-            # tmp_pcd = pcd_cam.transform(T_base_cam).transform(T_acc)
-
-            # tmp_pcd = pcd_cam.transform(T_acc @T_base_cam)
-            T_List_v2.append(T_acc @T_base_cam)
-            
-            # tmp_mere_list.append(tmp_pcd)
-        # o3d.visualization.draw_geometries(tmp_mere_list)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            T_List_v2.append(T_acc @ T_base_cam)
 
         o3d.io.write_point_cloud(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\body.ply", merged_pcd, print_progress=True)
 
@@ -165,15 +102,13 @@ class PCD:
         for d in T_acc_sorted:
             n = str(d["number"])            
             T_cam_to_merged_dict[n] = d["Transform"] @ T_base_cam_dict[n]
-
-
         circle_points_merged = []
         
         ANGLE_RANGE_BY_NAME = {
             "1": [(0, 360)],
             "2": [(0, 360)],
             "3": [(0, 360)], 
-            "4": [(0, 360)],# 좌/우만 보고 위쪽 제외 같은 식으로 2구간 가능
+            "4": [(0, 360)],
             "5": [(0, 360)],
         }
         
@@ -213,34 +148,12 @@ class PCD:
                 p_merged = (T_cam_to_merged @ p_cam_h)[:3]
                 circle_points_merged.append(p_merged)
 
-            # geoms = [merged_pcd]
-            # json_path = r".\\data\\cad.json"
-            # with open(json_path, "r", encoding="utf-8") as f:
-            #     data = json.load(f)
-            # cad_points  = np.array(data["RH"]["cad_centers"], dtype=np.float32)
-            # cad_points = np.asarray(cad_points, dtype=np.float64).reshape(-1, 3)
-            # for p in cad_points:
-            #     sph = o3d.geometry.TriangleMesh.create_sphere(radius=10.0)  # 반경 조절
-            #     sph.translate(p)
-            #     sph.paint_uniform_color([1.0, 0.0, 0.0])
-            #     geoms.append(sph)
-
-            # if len(circle_points_merged) > 0:
-            #     circle_pcd = self.make_points_pcd(np.asarray(circle_points_merged), color=(0, 1, 0.2))
-            #     geoms.append(circle_pcd)
-            # o3d.visualization.draw_geometries(geoms)
-
-        # T_list = [T_cam_to_merged_dict[str(d["number"])] for d in T_acc_sorted]
-
         T_list = [
             v for _, v in sorted(
                 T_cam_to_merged_dict.items(),
                 key=lambda kv: int(kv[0])
             )
         ]
-
-
-        # return T_list, merged_pcd, circle_points_merged
         
         return T_List_v2, merged_pcd, circle_points_merged
 
@@ -348,9 +261,7 @@ class PCD:
                 f"corrN={corr} fitness={last.fitness:.6f} rmse={last.inlier_rmse:.6f}")
 
             if corr == 0:
-                break
-        print("")
-        
+                break       
 
         return last, T
 

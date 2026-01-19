@@ -1,4 +1,5 @@
 from enum import Enum, auto
+import json
 from pathlib import Path
 from tqdm import tqdm
 
@@ -12,6 +13,8 @@ class Utils :
         self._calibration_file_path = ""
         self._source_data_folder_files = []
         self._deep_leaning_model_file_path = ""
+        self._cad_data = []
+        self._load_cad_data()
 
     @property
     def calibration_file_path(self) -> str:
@@ -21,7 +24,10 @@ class Utils :
         return self._source_data_folder_files
     @property
     def deep_leaning_model_file_path(self) -> str:
-        return self._deep_leaning_model_file_path
+        return self._deep_leaning_model_file_path    
+    @property
+    def cad_data(self) -> any:
+        return self._cad_data
 
     def on_load_source_data_folder(self, path: str, file_type: FileType) :
         if (file_type == FileType.Image) :
@@ -46,3 +52,8 @@ class Utils :
 
         else :
             self._deep_leaning_model_file_path = path
+    def _load_cad_data(self):
+        json_path = r".\\data\\cad.json"
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            self._cad_data = data
