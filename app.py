@@ -158,23 +158,14 @@ class MainWindow(QMainWindow):
 
     def on_inspect(self):
         self.log.append("Inspecting data...")
-        roi_hole_points_dict = {}
-
-
-        tmp_test = [self.result_pcd]
-        tmp_test = []
+        roi_hole_points_dict = {}        
 
         def extract_index(group):
-            """
-            group[0] 에서 앞 숫자 추출
-            예: '...\\10_IMG_Texture_8Bit.png' -> 10
-            """
             fname = os.path.basename(group[0])
             m = re.match(r"(\d+)_", fname)
             return int(m.group(1)) if m else -1
 
         source_data_folder_files_sort = sorted(self.utils.source_data_folder_files, key=extract_index)
-
 
         for i, frame in enumerate(tqdm(source_data_folder_files_sort, total=len(source_data_folder_files_sort))):
             pcd = PCD()
@@ -182,14 +173,9 @@ class MainWindow(QMainWindow):
 
             pts_cam = pcd._make_cam_pcd(x_path=x_path, y_path=y_path, z_path=z_path,texture_path=texture_path, mask_path=mask_path)
             frame_number = os.path.basename(texture_path).replace("_IMG_Texture_8Bit.png", "")
-            X = iio.imread(x_path).astype(np.float64)
-            Y = iio.imread(y_path).astype(np.float64)
-            Z = iio.imread(z_path).astype(np.float64)
-
-            h, w = X.shape
-            X = np.asarray(X)
-            Y = np.asarray(Y)
-            Z = np.asarray(Z)
+            X = np.asarray(iio.imread(x_path).astype(np.float64))
+            Y = np.asarray(iio.imread(y_path).astype(np.float64))
+            Z = np.asarray(iio.imread(z_path).astype(np.float64))
 
             mask_valid = np.isfinite(X) & np.isfinite(Y) & np.isfinite(Z)
             mask_valid = np.asarray(mask_valid, dtype=bool)
@@ -219,11 +205,7 @@ class MainWindow(QMainWindow):
             image_for_seg = cv2.imread(texture_path, cv2.IMREAD_COLOR)
             img_h, img_w, _ = image_for_seg.shape
 
-            #변경 필요 ========================================
-            json_path = r".\\data\\cad.json"
-            with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            cad_points  = np.array(data[self.current_model()]["cad_welding_points"], dtype=np.float32)            
+            cad_points  = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)            
             pcd_cad = o3d.geometry.PointCloud()
             pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
             # pcd_cad.paint_uniform_color([1.0, 0.0, 0.0])  # ✅ 빨강
@@ -238,8 +220,7 @@ class MainWindow(QMainWindow):
 
             # pcd_pts_cad.paint_uniform_color([1.0, 0.0, 0.0])  # 빨강(원하면 색 바꿔)
 
-            geoms = [self.result_pcd, pcd_pts_cad]
-            tmp_test.append(pcd_pts_cad)
+            geoms = [self.result_pcd, pcd_pts_cad]            
             # o3d.visualization.draw_geometries(geoms)
 
             for roi_id, center in enumerate(cad_points, start=1):
@@ -277,11 +258,8 @@ class MainWindow(QMainWindow):
                 if crop_img.size == 0:
                     continue
                 
-                ch, cw  = crop_img.shape[:2]
-                # if ch < 16 or cw < 16:                
-                #     continue
-                
-                results = self.seg_model(crop_img, device='cpu', verbose=False)
+                ch, cw  = crop_img.shape[:2]                
+                results = self.seg_model(crop_img, device='cuda:0', verbose=False)                
                 
                 if len(results) == 0 or results[0].masks is None:
                     print(f"[INFO] ROI : YOLO mask 없음 (view {frame_number}).")
@@ -321,9 +299,8 @@ class MainWindow(QMainWindow):
 
         vis.add_geometry(pcd_base)
         vis.add_geometry(pcd_holes)
-
         opt = vis.get_render_option()
-        opt.point_size = 4.0  # 필요하면 8~12까지 키워
+        opt.point_size = 4.0
 
         vis.run()
         vis.destroy_window()
