@@ -169,6 +169,8 @@ class MainWindow(QMainWindow):
 
         source_data_folder_files_sort = sorted(self.utils.source_data_folder_files, key=extract_index)
 
+        frame_pcd = {}
+
         for i, frame in enumerate(tqdm(source_data_folder_files_sort, total=len(source_data_folder_files_sort))):
             pcd = PCD()
             texture_path, x_path, y_path, z_path, pose_path, mask_path = frame
@@ -197,7 +199,8 @@ class MainWindow(QMainWindow):
             T_cam_to_cad = T_world_to_cad @ T_cam_to_world
 
             pts_cam = self.transform_points(pts_cam, T_cam_to_world)   
-            pts_cam = self.transform_points(pts_cam, T_world_to_cad)            
+            pts_cam = self.transform_points(pts_cam, T_world_to_cad)
+            frame_pcd[frame_number] = pts_cam
 
             image_for_seg = cv2.imread(texture_path, cv2.IMREAD_COLOR)
             img_h, img_w, _ = image_for_seg.shape
@@ -282,25 +285,25 @@ class MainWindow(QMainWindow):
                 n_hole = roi_hole_pts.shape[0]
                 
                 if n_hole > 0:
-                    roi_hole_points_dict.setdefault(roi_id, []).append(roi_hole_pts)        
+                    roi_hole_points_dict.setdefault(roi_id, {})[frame_number] = roi_hole_pts
 
-        self.inspect_real_welding_point(pcd_base = self.result_pcd, roi_hole_points_dict=roi_hole_points_dict, pad=5)
-        pcd_base = copy.deepcopy(self.result_pcd)        
-        pcd_base = self.result_pcd.voxel_down_sample(0.5)
+        self.inspect_real_welding_point(pcd_base = self.result_pcd, roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
+        # pcd_base = copy.deepcopy(self.result_pcd)        
+        # pcd_base = self.result_pcd.voxel_down_sample(0.5)
 
-        pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
-        pcd_holes.paint_uniform_color([1.0, 0.0, 0.0])
+        # pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
+        # pcd_holes.paint_uniform_color([1.0, 0.0, 0.0])
 
-        vis = o3d.visualization.Visualizer()
-        vis.create_window()
-        vis.add_geometry(pcd_base)
-        vis.add_geometry(pcd_holes)        
-        opt = vis.get_render_option()
-        opt.point_size = 4.0
-        vis.run()
-        vis.destroy_window()
+        # vis = o3d.visualization.Visualizer()
+        # vis.create_window()
+        # vis.add_geometry(pcd_base)
+        # vis.add_geometry(pcd_holes)        
+        # opt = vis.get_render_option()
+        # opt.point_size = 4.0
+        # vis.run()
+        # vis.destroy_window()
 
-        self.set_pointcloud(pcd_holes)
+        # self.set_pointcloud(pcd_holes)
 
     def set_pointcloud(self, pcd: o3d.geometry.PointCloud, *, size: float = 15.0, sampling_rate : 0.5):
         pcd = pcd.voxel_down_sample(sampling_rate)
@@ -376,31 +379,52 @@ class MainWindow(QMainWindow):
         return out
     
     def inspect_real_welding_point(self, 
-                                   pcd_base : o3d.geometry.PointCloud,
-                                   roi_hole_points_dict : dict[int, list[np.ndarray]],
+                                   pcd_base : o3d.geometry.PointCloud,                                   
+                                   roi_hole_points_dict : dict[int, dict[int, np.ndarray]],
+                                   frame_pcd : dict[int, o3d.geometry.PointCloud],                                   
                                    pad: int = 30) :
-        base_pts = np.asarray(pcd_base.points, dtype=np.float64)
-        if base_pts.size == 0:
-            print("[WARN] pcd_base is empty.")
-            return        
         
-        for roi_id, pts_list in roi_hole_points_dict.items():
-            if not pts_list:
+        # base_pts = np.asarray(pcd_base.points, dtype=np.float64)
+        # if base_pts.size == 0:
+        #     print("[WARN] pcd_base is empty.")
+        #     return        
+        
+        for roi_id, pcd_dict in roi_hole_points_dict.items():
+            print(rf"{roi_id+1}번째 타흔 확인")
+
+            # 1. frame 별로 가장 point cloud 수가 많은 것의
+            if not pcd_dict:
+                print("  [WARN] pcd_dict empty")
                 continue
+            best_frame_id, best_roi_pts = max(
+                pcd_dict.items(),
+                key=lambda kv: 0 if kv[1] is None else int(np.asarray(kv[1]).shape[0])
+            )
 
-            pts_cat = np.concatenate(pts_list, axis=0)
-            if pts_cat.size == 0:
+            best_frame_pcd = frame_pcd.get(best_frame_id, None)
+            if best_frame_pcd is None:
+                print(f"[ROI {roi_id}] best_frame_pcd is None (frame_id={best_frame_id})")
                 continue
+            
+            if isinstance(best_frame_pcd, o3d.geometry.PointCloud):
+                frame_pts = np.asarray(best_frame_pcd.points, dtype=np.float64)
+                frame_pcd_o3d = best_frame_pcd
+            else:
+                # best_frame_pcd가 np.ndarray라고 가정 (N,3)
+                frame_pts = np.asarray(best_frame_pcd, dtype=np.float64).reshape(-1, 3)
+                frame_pcd_o3d = o3d.geometry.PointCloud()
+                frame_pcd_o3d.points = o3d.utility.Vector3dVector(frame_pts)
 
-            center = pts_cat.mean(axis=0).astype(np.float64)
-
-            dist = np.linalg.norm(base_pts - center[None, :], axis=1)
+            # 2. 평면 피팅
+            center = np.asarray(best_roi_pts, dtype=np.float64).mean(axis=0)            
+            dist = np.linalg.norm(frame_pts - center[None, :], axis=1)
             crop_idx = np.where(dist <= float(pad))[0]
+
             if crop_idx.size == 0:
                 print(f"[ROI {roi_id}] crop empty (pad={pad})")
                 continue
 
-            pcd_crop = pcd_base.select_by_index(crop_idx.tolist())
+            pcd_crop = frame_pcd_o3d.select_by_index(crop_idx.tolist())
             pcd_filtered, inlier_idx = pcd_crop.remove_radius_outlier(
                 nb_points=30,
                 radius=1.0
@@ -410,6 +434,23 @@ class MainWindow(QMainWindow):
             pcd_near.paint_uniform_color((0,1,0))
             pcd_far.paint_uniform_color((0.6,0.6,0.6))
             o3d.visualization.draw_geometries([pcd_near, pcd_far])
+
+            # 3. 분포 확인
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             # s = o3d.geometry.TriangleMesh.create_sphere(radius=2.0)
             # s.translate(center)
             # s.paint_uniform_color((1.0, 0.0, 0.0))  # center = red
@@ -425,6 +466,8 @@ class MainWindow(QMainWindow):
                              ransac_thresh: float = 1.0,
                              ransac_n: int = 3,
                              num_iterations: int = 2000):
+        
+
         pts = np.asarray(pcd.points, dtype=np.float64)
         if pts.size == 0:
             return None, None, np.array([], dtype=np.int64)
