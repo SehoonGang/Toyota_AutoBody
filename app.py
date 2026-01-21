@@ -1,7 +1,8 @@
 import json
+import math
 import os
 import sys
-from typing import Sequence
+from typing import Optional, Sequence, Union
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (    
     QApplication, QComboBox, QHBoxLayout,
@@ -25,6 +26,21 @@ import copy
 
 import matplotlib.pyplot as plt
 import cv2
+
+import math
+import openpyxl
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+from dataclasses import dataclass
+from typing import Iterable, Optional, Sequence, Union
+@dataclass
+class RoiRow:
+    roi_id: Union[int, str]
+    cad_xyz: Sequence[float]          # (x,y,z)
+    source_xyz: Sequence[float]       # (x,y,z)
+    real_ng: bool                     # 실제 NG 여부(너의 로직 결과)
+    distance_threshold: Optional[float] = None  # 거리 NG 판정 기준 (None이면 판정 안 함)
 
 class PointCloudView(QWidget):
     def __init__(self, parent=None):
@@ -392,7 +408,7 @@ class MainWindow(QMainWindow):
                                    roi_hole_points_dict : dict[int, dict[int, np.ndarray]],
                                    frame_pcd : dict[int, o3d.geometry.PointCloud],
                                    pad: int = 30) : 
-                
+        samples = []        
         for roi_id, pcd_dict in roi_hole_points_dict.items():
             print(rf"{roi_id+1}번째 타흔 확인")
 
@@ -440,7 +456,18 @@ class MainWindow(QMainWindow):
                                                                      center=center,
                                                                      min_max_threshold = 0.2)
             
-            print(rf">>>>>>>>>>>>>>>>>> {best_frame_id} // {roi_id} // {is_welding} // {w_xyz}")
+            # cad <-> welding 중심점 거리 비교
+            cad_center_point = self.utils.cad_data[self.current_model()]["cad_welding_points"][roi_id - 1]
+            source_center_point = w_xyz
+            distance = self.distance_3d(cad_center_point, source_center_point)
+
+            print(rf"Welding Point {roi_id} : CAD X : {cad_center_point[0]} / CAD Y : {cad_center_point[1]} / CAD Z : {cad_center_point[2]}")
+            print(rf"Welding Point {roi_id} : SRC X : {source_center_point[0]} / SRC Y : {source_center_point[1]} / SRC Z : {source_center_point[2]}")
+            print(rf"Welding Point {roi_id} : DIST : {distance}")
+            samples.append(RoiRow(roi_id=roi_id, cad_xyz=(cad_center_point[0], cad_center_point[1], cad_center_point[2]), source_xyz=(source_center_point[0], source_center_point[1], source_center_point[2]), real_ng=is_welding, distance_threshold= 3))
+            
+        self.export_roi_distance_excel(samples, rf"{self.current_model()}_report.xlsx")
+            # print(rf">>>>>>>>>>>>>>>>>> {best_frame_id} // {roi_id} // {is_welding} // {w_xyz}")
             # pcd_near.paint_uniform_color((0,1,0))
             # pcd_far.paint_uniform_color((0.6,0.6,0.6))
             # o3d.visualization.draw_geometries([pcd_near, pcd_far])
@@ -524,10 +551,28 @@ class MainWindow(QMainWindow):
         above = pcd.select_by_index(rem_idx_trim.tolist())
 
         # 1. above filtering
-        above = self.remove_nearest_percent_from_above(above, below, 70)
+        above = self.remove_nearest_percent_from_above(above, below, 30)
+        above.paint_uniform_color((1, 0, 0))
 
         # 2. above plane fitting
         plane_model2, n2, above_inlier, above_outlier = self.fit_plane_from_pcd(above, ransac_thresh=0.05)
+
+        # 법선 부호 고정 (cam -> object)
+        a2, b2, c2, d2 = plane_model2
+        n2 = np.array([a2, b2, c2], dtype=np.float64)
+
+        if frame_idx is not None and center is not None:
+            T_cam_to_world = self.T_list[frame_idx]
+            T_cam_to_cad = self.result_T @ T_cam_to_world
+            cam_pos_cad = T_cam_to_cad[:3, 3]
+
+            center = np.asarray(center, dtype=np.float64).reshape(3)
+            v_ref = center - cam_pos_cad  # cam -> object (필요하면 반대로 바꿔 테스트)
+
+            if np.dot(n2, v_ref) < 0:
+                n2 = -n2
+                d2 = -d2
+                plane_model2 = [float(n2[0]), float(n2[1]), float(n2[2]), float(d2)]
 
         # 3. divide by plane2 
         a2, b2, c2, d2 = plane_model2
@@ -535,32 +580,41 @@ class MainWindow(QMainWindow):
         n2_norm = np.linalg.norm(n2) + 1e-12
 
         signed2 = (pts @ n2 + d2) / n2_norm
-        dist2 = np.abs(signed2)
-
-        near_thr2 = 0.05
-        near_mask = dist2 <= float(near_thr2)
+        near_thr2 = 0.03
+        near_mask = signed2 > float(near_thr2)
         far_mask  = ~near_mask
 
         near_idx = np.where(near_mask)[0]
         far_idx  = np.where(far_mask)[0]
 
-        palne_pcd = pcd.select_by_index(near_idx.tolist())
-        welding_pcd  = pcd.select_by_index(far_idx.tolist())
+        welding_pcd = pcd.select_by_index(near_idx.tolist())
+        plane_pcd  = pcd.select_by_index(far_idx.tolist())
+
         eps = self.auto_eps(welding_pcd, factor=2.5)
         welding_pcd = self.keep_largest_spatial_component(welding_pcd, eps, min_points=10) # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! min_points로 클러스터링 최적화 가능
 
-        # 4. confirm real welding points 
+        if len(welding_pcd.points) == 0:
+            return welding_pcd, plane_pcd, plane_model2, False, None
+
+        # welding_pcd.paint_uniform_color([1, 0, 0]) 
+        # plane_pcd.paint_uniform_color([0, 1, 0])
+        # o3d.visualization.draw_geometries([
+        #     welding_pcd,
+        #     plane_pcd
+        # ])
+
+    #     # 4. confirm real welding points 
         n_welding = len(welding_pcd.points)
-        n_plane   = len(palne_pcd.points)
+        n_plane   = len(plane_pcd.points)
 
         if n_welding < count_threshold or n_plane < count_threshold:
-            return welding_pcd, palne_pcd, plane_model2, False, None
+            return welding_pcd, plane_pcd, plane_model2, False, None
 
-        # plane1 기준 signed를 welding/plane 각각 다시 계산
+    #     # plane1 기준 signed를 welding/plane 각각 다시 계산
         w_pts = np.asarray(welding_pcd.points, dtype=np.float64)
-        p_pts = np.asarray(palne_pcd.points, dtype=np.float64)
+        p_pts = np.asarray(plane_pcd.points, dtype=np.float64)
 
-        s_welding = (w_pts @ n2 + d2) / n2_norm   # plane_model(첫 평면) 기준
+        s_welding = (w_pts @ n2 + d2) / n2_norm
         s_plane   = (p_pts @ n2 + d2) / n2_norm
 
         hi_a = np.percentile(s_plane, 100.0 * (1.0 - trim_ratio))
@@ -569,27 +623,28 @@ class MainWindow(QMainWindow):
         lo_b = np.percentile(s_welding, 100.0 * trim_ratio)
         s_welding_trim = s_welding[s_welding >= lo_b]
 
-        plane_max = float(s_plane_trim.max())
-        welding_min = float(s_welding_trim.max())
-        gap = plane_max - welding_min
-        print(rf">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> {gap}")
+        plane_min = float(s_plane_trim.min())
+        welding_max = float(s_welding_trim.max())
+        gap = welding_max - plane_min
+
+        print(rf">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> gap = {gap}")
         is_welding = gap >= float(min_max_threshold)
 
         # 5. center point
         if w_pts.size == 0:
-            return welding_pcd, palne_pcd, plane_model2, False, None
+            return welding_pcd, plane_pcd, plane_model2, False, None
 
         w_center = w_pts.mean(axis=0)
         w_x, w_y = float(w_center[0]), float(w_center[1])
 
         a2, b2, c2, d2 = plane_model2
         if abs(c2) < 1e-12:
-            return welding_pcd, palne_pcd, plane_model2, is_welding, None
+            return welding_pcd, plane_pcd, plane_model2, is_welding, None
 
         w_z = -(a2 * w_x + b2 * w_y + d2) / c2
         w_xyz = np.array([w_x, w_y, w_z], dtype=np.float64)
 
-        return welding_pcd, palne_pcd, plane_model2, is_welding, w_xyz
+        return above, below, plane_model, is_welding, w_xyz
     
     def fit_plane_from_pcd(self, pcd: o3d.geometry.PointCloud,
                        ransac_thresh: float = 0.05,
@@ -610,8 +665,8 @@ class MainWindow(QMainWindow):
         pcd_inlier = pcd.select_by_index(inliers)
         pcd_outlier = pcd.select_by_index(inliers, invert=True)
 
-        return plane_model, n, pcd_inlier, pcd_outlier
-
+        return plane_model, n, pcd_inlier, pcd_outlier    
+    
     def remove_nearest_percent_from_above(
         self,
         above: o3d.geometry.PointCloud,
@@ -685,6 +740,113 @@ class MainWindow(QMainWindow):
         if d.size == 0:
             return 1.0
         return float(np.median(d) * factor)
+
+    def distance_3d(self, p1, p2):
+        p1 = np.asarray(p1, dtype=np.float64).reshape(3)
+        p2 = np.asarray(p2, dtype=np.float64).reshape(3)
+        return float(np.linalg.norm(p1 - p2))
+
+    def export_roi_distance_excel(
+        self,
+        rows: Iterable[RoiRow],
+        out_xlsx_path: str,
+        sheet_name: str = "ROI_Report",
+    ) -> str:
+        """
+        ROI별 CAD 좌표, Source 좌표, 거리, NG 판단을 엑셀로 저장.
+        distance = Euclidean distance between cad_xyz and source_xyz.
+        distance_ng = (distance > distance_threshold) if threshold provided else None
+
+        returns: saved xlsx path
+        """
+        headers = [
+            "roi_id",
+            "cad x", "cad y", "cad z",
+            "source x", "source y", "source z",
+            "distance",
+            "real ng",
+            "distance ng",
+        ]
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = sheet_name
+
+        # Header styling
+        header_fill = PatternFill("solid", fgColor="1F4E79")  # dark blue
+        header_font = Font(color="FFFFFF", bold=True)
+        center = Alignment(horizontal="center", vertical="center")
+
+        ws.append(headers)
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = center
+
+        # Data rows
+        red_fill = PatternFill("solid", fgColor="FFC7CE")     # light red
+        red_font = Font(color="9C0006", bold=True)
+
+        def _dist(a, b) -> float:
+            dx = float(a[0]) - float(b[0])
+            dy = float(a[1]) - float(b[1])
+            dz = float(a[2]) - float(b[2])
+            return math.sqrt(dx*dx + dy*dy + dz*dz)
+
+        r = 2
+        for item in rows:
+            cad = item.cad_xyz
+            src = item.source_xyz
+            dist = _dist(cad, src)
+
+            if item.distance_threshold is None:
+                dist_ng = ""  # 기준 없으면 공란
+            else:
+                dist_ng = bool(dist > float(item.distance_threshold))
+
+            ws.append([
+                str(item.roi_id),
+                float(cad[0]), float(cad[1]), float(cad[2]),
+                float(src[0]), float(src[1]), float(src[2]),
+                float(dist),
+                bool(item.real_ng),
+                dist_ng if dist_ng != "" else "",
+            ])
+
+            # Align + number formats
+            for c in range(1, len(headers) + 1):
+                ws.cell(row=r, column=c).alignment = center
+
+            # 좌표/거리 소수점 포맷
+            for c in range(2, 9):  # cad/source/distance
+                ws.cell(row=r, column=c).number_format = "0.000"
+
+            # NG 강조(둘 중 하나라도 True면 행을 붉게)
+            real_ng_val = bool(item.real_ng)
+            dist_ng_val = bool(dist_ng) if dist_ng != "" else False
+            if real_ng_val or dist_ng_val:
+                for c in range(1, len(headers) + 1):
+                    cell = ws.cell(row=r, column=c)
+                    cell.fill = red_fill
+                    # 글씨도 강조하고 싶으면:
+                    if c in (9, 10):  # real ng, distance ng
+                        cell.font = red_font
+
+            r += 1
+
+        # Column width autosize (simple)
+        for col_idx in range(1, len(headers) + 1):
+            col_letter = get_column_letter(col_idx)
+            max_len = 0
+            for cell in ws[col_letter]:
+                val = "" if cell.value is None else str(cell.value)
+                max_len = max(max_len, len(val))
+            ws.column_dimensions[col_letter].width = min(max_len + 2, 28)
+
+        ws.freeze_panes = "A2"
+        wb.save(out_xlsx_path)
+        return out_xlsx_path
 
 def main():
     app = QApplication(sys.argv)
