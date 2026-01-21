@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from typing import Sequence
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (    
     QApplication, QComboBox, QHBoxLayout,
@@ -39,6 +40,7 @@ class PointCloudView(QWidget):
         self.result_pcd = o3d.geometry.PointCloud()
         self.result_T = np.eye(4, dtype=np.float64)
         self.T_list = []
+        self.frame_idx = {}
 
         g = gl.GLGridItem()
         g.scale(200, 200, 1)
@@ -170,6 +172,8 @@ class MainWindow(QMainWindow):
         source_data_folder_files_sort = sorted(self.utils.source_data_folder_files, key=extract_index)
 
         frame_pcd = {}
+        pose_dict = {}
+        self.frame_idx = {} 
 
         for i, frame in enumerate(tqdm(source_data_folder_files_sort, total=len(source_data_folder_files_sort))):
             pcd = PCD()
@@ -197,6 +201,7 @@ class MainWindow(QMainWindow):
             T_cam_to_world = self.T_list[i]
             T_world_to_cad = self.result_T
             T_cam_to_cad = T_world_to_cad @ T_cam_to_world
+            self.frame_idx[frame_number] = i
 
             pts_cam = self.transform_points(pts_cam, T_cam_to_world)   
             pts_cam = self.transform_points(pts_cam, T_world_to_cad)
@@ -287,7 +292,12 @@ class MainWindow(QMainWindow):
                 if n_hole > 0:
                     roi_hole_points_dict.setdefault(roi_id, {})[frame_number] = roi_hole_pts
 
-        self.inspect_real_welding_point(pcd_base = self.result_pcd, roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
+
+            pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]
+            pose = pose[:6]
+            pose_dict[frame_number] = pose
+
+        self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
         # pcd_base = copy.deepcopy(self.result_pcd)        
         # pcd_base = self.result_pcd.voxel_down_sample(0.5)
 
@@ -378,17 +388,11 @@ class MainWindow(QMainWindow):
         out = (T @ ph.T).T[:, :3]                     # (N,3)
         return out
     
-    def inspect_real_welding_point(self, 
-                                   pcd_base : o3d.geometry.PointCloud,                                   
+    def inspect_real_welding_point(self,                                 
                                    roi_hole_points_dict : dict[int, dict[int, np.ndarray]],
-                                   frame_pcd : dict[int, o3d.geometry.PointCloud],                                   
-                                   pad: int = 30) :
-        
-        # base_pts = np.asarray(pcd_base.points, dtype=np.float64)
-        # if base_pts.size == 0:
-        #     print("[WARN] pcd_base is empty.")
-        #     return        
-        
+                                   frame_pcd : dict[int, o3d.geometry.PointCloud],
+                                   pad: int = 30) : 
+                
         for roi_id, pcd_dict in roi_hole_points_dict.items():
             print(rf"{roi_id+1}번째 타흔 확인")
 
@@ -430,7 +434,10 @@ class MainWindow(QMainWindow):
                 radius=1.0
             )
 
-            pcd_near, pcd_far, plane = self.filter_points_near_plane(pcd_filtered, distance_threshold=0.05)
+            pcd_near, pcd_far, plane = self.filter_points_near_plane(pcd_filtered,
+                                                                     distance_threshold=0.05,
+                                                                     frame_idx = self.frame_idx[best_frame_id],
+                                                                     center=center)
             pcd_near.paint_uniform_color((0,1,0))
             pcd_far.paint_uniform_color((0.6,0.6,0.6))
             o3d.visualization.draw_geometries([pcd_near, pcd_far])
@@ -461,18 +468,15 @@ class MainWindow(QMainWindow):
 
             # o3d.visualization.draw_geometries([pcd_filtered, pcd_hole, s],window_name=f"ROI {roi_id} crop (pad={pad})")
 
-    def filter_points_near_plane(self, pcd: o3d.geometry.PointCloud,
-                             distance_threshold: float = 1.0,
-                             ransac_thresh: float = 1.0,
-                             ransac_n: int = 3,
-                             num_iterations: int = 2000):
-        
+    def filter_points_near_plane(self, pcd, distance_threshold=1.0, ransac_thresh=1.0,
+                             ransac_n=3, num_iterations=2000,
+                             frame_idx: int | None = None,
+                             center: np.ndarray | None = None):
 
         pts = np.asarray(pcd.points, dtype=np.float64)
         if pts.size == 0:
             return None, None, np.array([], dtype=np.int64)
 
-        # 1) plane fit: ax + by + cz + d = 0
         plane_model, inliers = pcd.segment_plane(
             distance_threshold=float(ransac_thresh),
             ransac_n=int(ransac_n),
@@ -484,16 +488,26 @@ class MainWindow(QMainWindow):
         if n_norm < 1e-12:
             raise RuntimeError("Plane normal is near zero.")
 
-        # 2) point-to-plane distance
-        # dist = |a x + b y + c z + d| / sqrt(a^2+b^2+c^2)
-        signed = (pts @ n + d) / n_norm
+        # ✅ 법선 부호 고정
+        if frame_idx is not None and center is not None:
+            T_cam_to_world = self.T_list[frame_idx]
+            T_cam_to_cad = self.result_T @ T_cam_to_world
+            cam_pos_cad = T_cam_to_cad[:3, 3]
+
+            center = np.asarray(center, dtype=np.float64).reshape(3)
+            v_ref = center - cam_pos_cad  # cam -> object (필요하면 반대로 바꿔 테스트)
+
+            if np.dot(n, v_ref) < 0:
+                n = -n
+                d = -d
+                plane_model = [n[0], n[1], n[2], d]
+
+        signed = (pts @ n + d) / (np.linalg.norm(n) + 1e-12)
 
         keep = signed > float(distance_threshold)
         keep_idx = np.where(keep)[0]
 
-        pcd_kept = pcd.select_by_index(keep_idx.tolist())
-        pcd_removed = pcd.select_by_index(keep_idx.tolist(), invert=True)
-        return pcd_kept, pcd_removed, plane_model
+        return pcd.select_by_index(keep_idx.tolist()), pcd.select_by_index(keep_idx.tolist(), invert=True), plane_model
 
 def main():
     app = QApplication(sys.argv)
