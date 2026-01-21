@@ -434,15 +434,16 @@ class MainWindow(QMainWindow):
                 radius=1.0
             )
 
-            pcd_near, pcd_far, plane = self.filter_points_near_plane(pcd_filtered,
+            pcd_near, pcd_far, plane, is_welding = self.filter_points_near_plane(pcd_filtered,
                                                                      distance_threshold=0.05,
                                                                      frame_idx = self.frame_idx[best_frame_id],
-                                                                     center=center)
+                                                                     center=center,
+                                                                     min_max_threshold = 0.2)
+            
+            print(rf">>>>>>>>>>>>>>>>>> {best_frame_id} // {roi_id} // {is_welding}")
             pcd_near.paint_uniform_color((0,1,0))
             pcd_far.paint_uniform_color((0.6,0.6,0.6))
             o3d.visualization.draw_geometries([pcd_near, pcd_far])
-
-            # 3. 분포 확인
 
 
 
@@ -471,12 +472,16 @@ class MainWindow(QMainWindow):
     def filter_points_near_plane(self, pcd, distance_threshold=1.0, ransac_thresh=1.0,
                              ransac_n=3, num_iterations=2000,
                              frame_idx: int | None = None,
-                             center: np.ndarray | None = None):
+                             center: np.ndarray | None = None,
+                             trim_ratio: float = 0.05,
+                             count_threshold: int = 30,
+                             min_max_threshold: float = 0.2):
 
         pts = np.asarray(pcd.points, dtype=np.float64)
         if pts.size == 0:
-            return None, None, np.array([], dtype=np.int64)
+            return None, None, np.array([], dtype=np.int64), False
 
+        # 1) plane fit
         plane_model, inliers = pcd.segment_plane(
             distance_threshold=float(ransac_thresh),
             ransac_n=int(ransac_n),
@@ -488,7 +493,7 @@ class MainWindow(QMainWindow):
         if n_norm < 1e-12:
             raise RuntimeError("Plane normal is near zero.")
 
-        # ✅ 법선 부호 고정
+        # 2) 법선 부호 고정 (cam -> object)
         if frame_idx is not None and center is not None:
             T_cam_to_world = self.T_list[frame_idx]
             T_cam_to_cad = self.result_T @ T_cam_to_world
@@ -502,13 +507,62 @@ class MainWindow(QMainWindow):
                 d = -d
                 plane_model = [n[0], n[1], n[2], d]
 
+        # 3) signed distance
         signed = (pts @ n + d) / (np.linalg.norm(n) + 1e-12)
 
         keep = signed > float(distance_threshold)
+        
         keep_idx = np.where(keep)[0]
+        rem_idx  = np.where(~keep)[0]
 
-        return pcd.select_by_index(keep_idx.tolist()), pcd.select_by_index(keep_idx.tolist(), invert=True), plane_model
+        def trim_indices_by_signed(global_idx: np.ndarray, signed_all: np.ndarray, trim_ratio: float) -> np.ndarray:
+            """global_idx에 해당하는 signed 값에서 상/하위 trim_ratio 제거 후 남는 global_idx 반환"""
+            if global_idx.size == 0:
+                return global_idx
 
+            s = signed_all[global_idx]  # 해당 그룹의 signed 값들
+
+            lo = np.percentile(s, 100.0 * trim_ratio)
+            hi = np.percentile(s, 100.0 * (1.0 - trim_ratio))
+
+            keep_local = (s >= lo) & (s <= hi)
+            return global_idx[keep_local]
+
+        trim_ratio = float(trim_ratio)  # 파라미터로 받고 있다고 가정
+
+        keep_idx_trim = trim_indices_by_signed(keep_idx, signed, trim_ratio)
+        rem_idx_trim  = trim_indices_by_signed(rem_idx,  signed, trim_ratio)
+
+        pcd_kept_trim    = pcd.select_by_index(keep_idx_trim.tolist())
+        pcd_removed_trim = pcd.select_by_index(rem_idx_trim.tolist())
+
+        eps = float(distance_threshold)
+        above = signed > +eps
+        below = signed < -eps
+
+        n_above = int(np.count_nonzero(above))
+        n_below = int(np.count_nonzero(below))
+
+        if n_above < count_threshold or n_below < count_threshold:            
+            return pcd_kept_trim, pcd_removed_trim, plane_model, False
+        
+        s_above = signed[above]
+        s_below = signed[below]
+
+        hi_a = np.percentile(s_above, 100.0 * (1.0 - trim_ratio))
+        s_above_trim = s_above[s_above <= hi_a]
+
+        lo_b = np.percentile(s_below, 100.0 * trim_ratio)
+        s_below_trim = s_below[s_below >= lo_b]
+
+        above_max = float(s_above_trim.max())
+        below_min = float(s_below_trim.min())
+
+        gap = above_max - below_min   # (양수 - 음수) -> 큰 값
+        is_welding = gap >= float(min_max_threshold)
+        print(rf"-------------------{gap}")
+        return pcd_kept_trim, pcd_removed_trim, plane_model, is_welding
+    
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()
