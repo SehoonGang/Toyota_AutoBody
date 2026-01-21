@@ -434,30 +434,16 @@ class MainWindow(QMainWindow):
                 radius=1.0
             )
 
-            pcd_near, pcd_far, plane, is_welding = self.filter_points_near_plane(pcd_filtered,
+            pcd_near, pcd_far, plane, is_welding, w_xyz = self.filter_points_near_plane(pcd_filtered,
                                                                      distance_threshold=0.05,
                                                                      frame_idx = self.frame_idx[best_frame_id],
                                                                      center=center,
                                                                      min_max_threshold = 0.2)
             
-            print(rf">>>>>>>>>>>>>>>>>> {best_frame_id} // {roi_id} // {is_welding}")
-            pcd_near.paint_uniform_color((0,1,0))
-            pcd_far.paint_uniform_color((0.6,0.6,0.6))
-            o3d.visualization.draw_geometries([pcd_near, pcd_far])
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            print(rf">>>>>>>>>>>>>>>>>> {best_frame_id} // {roi_id} // {is_welding} // {w_xyz}")
+            # pcd_near.paint_uniform_color((0,1,0))
+            # pcd_far.paint_uniform_color((0.6,0.6,0.6))
+            # o3d.visualization.draw_geometries([pcd_near, pcd_far])
 
             # s = o3d.geometry.TriangleMesh.create_sphere(radius=2.0)
             # s.translate(center)
@@ -479,7 +465,7 @@ class MainWindow(QMainWindow):
 
         pts = np.asarray(pcd.points, dtype=np.float64)
         if pts.size == 0:
-            return None, None, np.array([], dtype=np.int64), False
+            return None, None, np.array([], dtype=np.int64), False, None
 
         # 1) plane fit
         plane_model, inliers = pcd.segment_plane(
@@ -508,7 +494,8 @@ class MainWindow(QMainWindow):
                 plane_model = [n[0], n[1], n[2], d]
 
         # 3) signed distance
-        signed = (pts @ n + d) / (np.linalg.norm(n) + 1e-12)
+        n_norm = (np.linalg.norm(n) + 1e-12)
+        signed = (pts @ n + d) / n_norm
 
         keep = signed > float(distance_threshold)
         
@@ -533,36 +520,172 @@ class MainWindow(QMainWindow):
         keep_idx_trim = trim_indices_by_signed(keep_idx, signed, trim_ratio)
         rem_idx_trim  = trim_indices_by_signed(rem_idx,  signed, trim_ratio)
 
-        pcd_kept_trim    = pcd.select_by_index(keep_idx_trim.tolist())
-        pcd_removed_trim = pcd.select_by_index(rem_idx_trim.tolist())
+        below = pcd.select_by_index(keep_idx_trim.tolist())
+        above = pcd.select_by_index(rem_idx_trim.tolist())
 
-        eps = float(distance_threshold)
-        above = signed > +eps
-        below = signed < -eps
+        # 1. above filtering
+        above = self.remove_nearest_percent_from_above(above, below, 70)
 
-        n_above = int(np.count_nonzero(above))
-        n_below = int(np.count_nonzero(below))
+        # 2. above plane fitting
+        plane_model2, n2, above_inlier, above_outlier = self.fit_plane_from_pcd(above, ransac_thresh=0.05)
 
-        if n_above < count_threshold or n_below < count_threshold:            
-            return pcd_kept_trim, pcd_removed_trim, plane_model, False
-        
-        s_above = signed[above]
-        s_below = signed[below]
+        # 3. divide by plane2 
+        a2, b2, c2, d2 = plane_model2
+        n2 = np.array([a2, b2, c2], dtype=np.float64)
+        n2_norm = np.linalg.norm(n2) + 1e-12
 
-        hi_a = np.percentile(s_above, 100.0 * (1.0 - trim_ratio))
-        s_above_trim = s_above[s_above <= hi_a]
+        signed2 = (pts @ n2 + d2) / n2_norm
+        dist2 = np.abs(signed2)
 
-        lo_b = np.percentile(s_below, 100.0 * trim_ratio)
-        s_below_trim = s_below[s_below >= lo_b]
+        near_thr2 = 0.05
+        near_mask = dist2 <= float(near_thr2)
+        far_mask  = ~near_mask
 
-        above_max = float(s_above_trim.max())
-        below_min = float(s_below_trim.min())
+        near_idx = np.where(near_mask)[0]
+        far_idx  = np.where(far_mask)[0]
 
-        gap = above_max - below_min   # (양수 - 음수) -> 큰 값
+        palne_pcd = pcd.select_by_index(near_idx.tolist())
+        welding_pcd  = pcd.select_by_index(far_idx.tolist())
+        eps = self.auto_eps(welding_pcd, factor=2.5)
+        welding_pcd = self.keep_largest_spatial_component(welding_pcd, eps, min_points=10) # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! min_points로 클러스터링 최적화 가능
+
+        # 4. confirm real welding points 
+        n_welding = len(welding_pcd.points)
+        n_plane   = len(palne_pcd.points)
+
+        if n_welding < count_threshold or n_plane < count_threshold:
+            return welding_pcd, palne_pcd, plane_model2, False, None
+
+        # plane1 기준 signed를 welding/plane 각각 다시 계산
+        w_pts = np.asarray(welding_pcd.points, dtype=np.float64)
+        p_pts = np.asarray(palne_pcd.points, dtype=np.float64)
+
+        s_welding = (w_pts @ n2 + d2) / n2_norm   # plane_model(첫 평면) 기준
+        s_plane   = (p_pts @ n2 + d2) / n2_norm
+
+        hi_a = np.percentile(s_plane, 100.0 * (1.0 - trim_ratio))
+        s_plane_trim = s_plane[s_plane <= hi_a]
+
+        lo_b = np.percentile(s_welding, 100.0 * trim_ratio)
+        s_welding_trim = s_welding[s_welding >= lo_b]
+
+        plane_max = float(s_plane_trim.max())
+        welding_min = float(s_welding_trim.max())
+        gap = plane_max - welding_min
+        print(rf">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> {gap}")
         is_welding = gap >= float(min_max_threshold)
-        print(rf"-------------------{gap}")
-        return pcd_kept_trim, pcd_removed_trim, plane_model, is_welding
+
+        # 5. center point
+        if w_pts.size == 0:
+            return welding_pcd, palne_pcd, plane_model2, False, None
+
+        w_center = w_pts.mean(axis=0)
+        w_x, w_y = float(w_center[0]), float(w_center[1])
+
+        a2, b2, c2, d2 = plane_model2
+        if abs(c2) < 1e-12:
+            return welding_pcd, palne_pcd, plane_model2, is_welding, None
+
+        w_z = -(a2 * w_x + b2 * w_y + d2) / c2
+        w_xyz = np.array([w_x, w_y, w_z], dtype=np.float64)
+
+        return welding_pcd, palne_pcd, plane_model2, is_welding, w_xyz
     
+    def fit_plane_from_pcd(self, pcd: o3d.geometry.PointCloud,
+                       ransac_thresh: float = 0.05,
+                       ransac_n: int = 3,
+                       num_iterations: int = 2000):
+        if pcd is None or len(pcd.points) < ransac_n:
+            raise ValueError("Not enough points to fit a plane.")
+
+        plane_model, inliers = pcd.segment_plane(
+            distance_threshold=float(ransac_thresh),
+            ransac_n=int(ransac_n),
+            num_iterations=int(num_iterations),
+        )
+        a, b, c, d = plane_model
+        n = np.array([a, b, c], dtype=np.float64)
+        n = n / (np.linalg.norm(n) + 1e-12)
+
+        pcd_inlier = pcd.select_by_index(inliers)
+        pcd_outlier = pcd.select_by_index(inliers, invert=True)
+
+        return plane_model, n, pcd_inlier, pcd_outlier
+
+    def remove_nearest_percent_from_above(
+        self,
+        above: o3d.geometry.PointCloud,
+        below: o3d.geometry.PointCloud,
+        n_percent: float = 20.0  # 가까운 n% 제거
+    ) -> o3d.geometry.PointCloud:
+        A = np.asarray(above.points, dtype=np.float64)
+        B = np.asarray(below.points, dtype=np.float64)
+
+        if A.size == 0:
+            return o3d.geometry.PointCloud()
+        if B.size == 0:
+            # below가 비어있으면 기준점이 없으니 above 그대로
+            return above
+
+        # 1) below 평균점(중심)
+        c = B.mean(axis=0)  # (3,)
+
+        # 2) above 각 점의 중심까지 거리
+        dist = np.linalg.norm(A - c[None, :], axis=1)
+
+        # 3) 가까운 n% 인덱스 계산
+        n_percent = float(n_percent)
+        n_percent = max(0.0, min(100.0, n_percent))
+        k = int(np.floor(len(dist) * (n_percent / 100.0)))
+
+        if k <= 0:
+            return above  # 제거할 게 없음
+        if k >= len(dist):
+            return o3d.geometry.PointCloud()  # 전부 제거
+
+        order = np.argsort(dist)      # 가까운 순
+        remove_idx = order[:k]        # 가까운 k개 제거
+
+        # 4) 제거 후 남길 인덱스
+        keep_mask = np.ones(len(dist), dtype=bool)
+        keep_mask[remove_idx] = False
+        keep_idx = np.where(keep_mask)[0]
+
+        return above.select_by_index(keep_idx.tolist())
+    
+    def keep_largest_spatial_component(self, pcd: o3d.geometry.PointCloud, eps: float = 2.0, min_points: int = 10):
+        
+        if pcd is None or len(pcd.points) == 0:
+            return o3d.geometry.PointCloud()
+
+        labels = np.asarray(pcd.cluster_dbscan(eps=float(eps), min_points=int(min_points), print_progress=False), dtype=np.int32)
+
+        print("N:", len(labels), "noise:", np.sum(labels == -1), "clusters:", len(set(labels)) - (1 if -1 in labels else 0))
+
+        # 전부 노이즈(-1)면 빈 결과
+        valid = labels >= 0
+        if not np.any(valid):
+            return o3d.geometry.PointCloud()
+
+        counts = np.bincount(labels[valid])
+        largest_label = int(np.argmax(counts))
+
+        keep_idx = np.where(labels == largest_label)[0]
+        return pcd.select_by_index(keep_idx.tolist())
+    
+    def auto_eps(self, pcd: o3d.geometry.PointCloud, factor: float = 2.5, sample: int = 5000) -> float:
+        if len(pcd.points) == 0:
+            return 1.0
+        if len(pcd.points) > sample:
+            idx = np.random.choice(len(pcd.points), sample, replace=False)
+            p = pcd.select_by_index(idx.tolist())
+        else:
+            p = pcd
+        d = np.asarray(p.compute_nearest_neighbor_distance())
+        if d.size == 0:
+            return 1.0
+        return float(np.median(d) * factor)
+
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()
