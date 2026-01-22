@@ -49,10 +49,29 @@ class PCD:
                     if circles2d:
                         detected_circle_centers[frame_number].append(circles2d[0])
             else :
-                if frame_number == '3':
-                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=1388, y = 976, r = 100)
+                if frame_number == '1':
+                    detect_circle_setting = dict(
+                            topk_hough=5,
+                            roi_scale=2.6,          # 2.2 -> 2.6 (바깥 그림자까지 ROI에 더 여유)
+                            roi_half_min=80,        # 60 -> 80 (너무 타이트하면 바깥원 잘림)
+                            roi_half_max=300,       # 260 -> 300
+
+                            band_px=6.0,            # 4.0 -> 6.0 (검증 밴드 넓혀서 바깥 에지 포함)
+                            arc_min=0.10,           # 0.15 -> 0.10 (그림자 때문에 원호가 덜 잡혀도 통과)
+
+                            dp=1.2,
+                            minDist=120,            # 140 -> 120 (큰 의미 없지만 ROI내 1개면 낮춰도 됨)
+
+                            param1=70,              # 120 -> 90 (에지 더 뽑히게)
+                            param2=16,              # 24 -> 16 (누적 임계 낮춰 바깥 원 같은 약한 원도 후보로)
+
+                            minRadius=30,           # ✅ 핵심: inner edge 배제
+                            maxRadius=60          # ✅ 핵심: 바깥 원 범위로 제한
+                        )
+                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=806, y = 911, r = 100)
                     if circles2d:
                         detected_circle_centers[frame_number].append(circles2d[0])
+                elif frame_number == '3':
                     circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=2106, y = 673, r = 100)
                     if circles2d:
                         detected_circle_centers[frame_number].append(circles2d[0])
@@ -383,6 +402,7 @@ class PCD:
                                                   minRadius=detect_circle_setting["minRadius"], 
                                                   maxRadius=detect_circle_setting["maxRadius"],
         )
+
         if circles is None or len(circles) == 0:
             return []
         
@@ -390,11 +410,11 @@ class PCD:
         if len(center_candidates) == 0:
             return []
 
-        results: List[CircleResult] = []
-        
+        results: List[CircleResult] = []        
+
         for (cx, cy, r) in center_candidates:
             half = int(round(r * detect_circle_setting["roi_scale"]))
-            half = max(detect_circle_setting["roi_half_min"], min(half, detect_circle_setting["roi_half_max"]))
+            half = max(detect_circle_setting["roi_half_min"], min(half, detect_circle_setting["roi_half_max"]))            
             vis_final = img.copy()       
             roi, x_off, y_off = self.crop_roi(img, cx, cy, half)
             if roi.size == 0:
