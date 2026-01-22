@@ -1,3 +1,4 @@
+import datetime
 import json
 import math
 import os
@@ -93,7 +94,7 @@ class MainWindow(QMainWindow):
         self.radioGroup = QButtonGroup(self)
         self.radioL = QRadioButton("L Model")
         self.radioR = QRadioButton("R Model")
-        self.radioL.setChecked(True)
+        self.radioR.setChecked(True)
         self.radioGroup.addButton(self.radioL)
         self.radioGroup.addButton(self.radioR) 
         radioRow = QHBoxLayout()
@@ -104,7 +105,7 @@ class MainWindow(QMainWindow):
 
         sourceDataFolderRow = QHBoxLayout()
         sourceDataFolderRow.addWidget(QLabel("Source Data"))
-        self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\LH")
+        self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\RH")
         sourceDataFolderRow.addWidget(self.tbSourceDataFolderPath)
         self.btnSourceDataLoad = QPushButton("Load")
         sourceDataFolderRow.addWidget(self.btnSourceDataLoad)
@@ -461,16 +462,31 @@ class MainWindow(QMainWindow):
             source_center_point = w_xyz
             distance = self.distance_3d(cad_center_point, source_center_point)
 
-            print(rf"Welding Point {roi_id} : CAD X : {cad_center_point[0]} / CAD Y : {cad_center_point[1]} / CAD Z : {cad_center_point[2]}")
-            print(rf"Welding Point {roi_id} : SRC X : {source_center_point[0]} / SRC Y : {source_center_point[1]} / SRC Z : {source_center_point[2]}")
-            print(rf"Welding Point {roi_id} : DIST : {distance}")
-            samples.append(RoiRow(roi_id=roi_id, cad_xyz=(cad_center_point[0], cad_center_point[1], cad_center_point[2]), source_xyz=(source_center_point[0], source_center_point[1], source_center_point[2]), real_ng=is_welding, distance_threshold= 3))
+            def sphere_at(p, radius=2.0, color=(1.0, 0.0, 0.0)):
+                p = np.asarray(p, dtype=np.float64).reshape(3)
+                s = o3d.geometry.TriangleMesh.create_sphere(radius=float(radius))
+                s.translate(p)
+                s.paint_uniform_color(color)
+                return s
+
+            # w_xyz: np.array([w_x, w_y, w_z])
+            # cad_center_point: (3,) array-like
+
+            # w_sphere   = sphere_at(w_xyz, radius=2.0, color=(0.5, 0.5, 0.5))   # 빨강: w_xyz
+            # cad_sphere = sphere_at(cad_center_point, radius=2.0, color=(0.0, 0, 1)) 
+
+            # print(rf"Welding Point {roi_id} : CAD X : {cad_center_point[0]} / CAD Y : {cad_center_point[1]} / CAD Z : {cad_center_point[2]}")
+            # print(rf"Welding Point {roi_id} : SRC X : {source_center_point[0]} / SRC Y : {source_center_point[1]} / SRC Z : {source_center_point[2]}")
+            # print(rf"Welding Point {roi_id} : DIST : {distance}")
+            samples.append(RoiRow(roi_id=roi_id, cad_xyz=(cad_center_point[0], cad_center_point[1], cad_center_point[2]), source_xyz=(source_center_point[0], source_center_point[1], source_center_point[2]), real_ng=is_welding, distance_threshold= 4))
+            # pcd_near.paint_uniform_color((0,1,0))
+            # pcd_far.paint_uniform_color((1, 0, 0))
+            # o3d.visualization.draw_geometries([pcd_near, pcd_far, cad_sphere, w_sphere])
             
+        samples.sort(key=lambda r: r.roi_id)
+        # self.export_roi_distance_excel(samples, rf"{self.current_model()}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
         self.export_roi_distance_excel(samples, rf"{self.current_model()}_report.xlsx")
             # print(rf">>>>>>>>>>>>>>>>>> {best_frame_id} // {roi_id} // {is_welding} // {w_xyz}")
-            # pcd_near.paint_uniform_color((0,1,0))
-            # pcd_far.paint_uniform_color((0.6,0.6,0.6))
-            # o3d.visualization.draw_geometries([pcd_near, pcd_far])
 
             # s = o3d.geometry.TriangleMesh.create_sphere(radius=2.0)
             # s.translate(center)
@@ -644,7 +660,7 @@ class MainWindow(QMainWindow):
         w_z = -(a2 * w_x + b2 * w_y + d2) / c2
         w_xyz = np.array([w_x, w_y, w_z], dtype=np.float64)
 
-        return above, below, plane_model, is_welding, w_xyz
+        return welding_pcd, plane_pcd, plane_model, is_welding, w_center
     
     def fit_plane_from_pcd(self, pcd: o3d.geometry.PointCloud,
                        ransac_thresh: float = 0.05,
@@ -760,12 +776,12 @@ class MainWindow(QMainWindow):
         returns: saved xlsx path
         """
         headers = [
-            "roi_id",
-            "cad x", "cad y", "cad z",
-            "source x", "source y", "source z",
-            "distance",
-            "real ng",
-            "distance ng",
+            "Welding ID",
+            "Cad x", "Cad y", "Cad z",
+            "Real x", "Real y", "Real z",
+            "Distance",
+            "Real Welding",
+            "Distance OK",
         ]
 
         wb = openpyxl.Workbook()
@@ -803,7 +819,7 @@ class MainWindow(QMainWindow):
             if item.distance_threshold is None:
                 dist_ng = ""  # 기준 없으면 공란
             else:
-                dist_ng = bool(dist > float(item.distance_threshold))
+                dist_ng = bool(dist < float(item.distance_threshold))
 
             ws.append([
                 str(item.roi_id),
