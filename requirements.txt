@@ -7,3 +7,4 @@ pyqtgraph
 PyOpenGL
 PyOpenGL_accelerate
 ultralytics
+sockets

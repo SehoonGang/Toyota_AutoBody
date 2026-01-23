@@ -1,0 +1,19 @@
+{
+    "DESKTOP-UMSLM69": {
+        "source_data_folder": "C:\\Users\\leejm90\\Desktop\\CLE\\TTS_AutoBody\\Sehoon\\Dataset\\data_260123\\RH",
+        "calibration_file": "C:\\Users\\leejm90\\Desktop\\CLE\\TTS_AutoBody\\Sehoon\\Dataset\\data_260123\\cam_robot_extrinsic_0_1_hand_eye.yml",
+        "deep_learning_model": "C:\\Users\\leejm90\\Desktop\\CLE\\TTS_AutoBody\\Sehoon\\Dataset\\data_260123\\260123_inspection_model.pt",
+        "bodyPath": "C:\\Users\\leejm90\\Desktop\\CLE\\TTS_AutoBody\\Sehoon\\Dataset\\data_260123\\body.ply"
+
+    },
+    "LAPTOP-XYZ789": {
+        "source_data_folder": "D:\\MyData\\dataset\\RH",
+        "calibration_file": "D:\\MyData\\dataset\\calibration.yml",
+        "deep_learning_model": "D:\\MyData\\dataset\\model.pt"
+    },
+    "default": {
+        "source_data_folder": "",
+        "calibration_file": "",
+        "deep_learning_model": ""
+    }
+}

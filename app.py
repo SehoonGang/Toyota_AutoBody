@@ -24,6 +24,7 @@ import cv2
 from ultralytics import YOLO
 import re
 import copy
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import cv2
@@ -35,6 +36,8 @@ from openpyxl.utils import get_column_letter
 
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence, Union
+import socket
+
 @dataclass
 class RoiRow:
     roi_id: Union[int, str]
@@ -72,6 +75,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)        
         self.utils = Utils()
         self.pcd = PCD()
+        self._set_path()
+
+
+
         
         leftWidget = QWidget()
         rightWidget = QWidget()        
@@ -105,7 +112,8 @@ class MainWindow(QMainWindow):
 
         sourceDataFolderRow = QHBoxLayout()
         sourceDataFolderRow.addWidget(QLabel("Source Data"))
-        self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\RH")
+        # self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\RH")
+        self.tbSourceDataFolderPath = QLineEdit(self._source_dir)
         sourceDataFolderRow.addWidget(self.tbSourceDataFolderPath)
         self.btnSourceDataLoad = QPushButton("Load")
         sourceDataFolderRow.addWidget(self.btnSourceDataLoad)
@@ -113,7 +121,8 @@ class MainWindow(QMainWindow):
         
         calibrationFileRow = QHBoxLayout()
         calibrationFileRow.addWidget(QLabel("Calibration File"))
-        self.tbCalibrationFilePath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\cam_robot_extrinsic_0_1_hand_eye.yml")
+        # self.tbCalibrationFilePath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\cam_robot_extrinsic_0_1_hand_eye.yml")
+        self.tbCalibrationFilePath = QLineEdit(self._calib_path)
         calibrationFileRow.addWidget(self.tbCalibrationFilePath)
         self.btnCalibrationFilePath = QPushButton("Load")
         calibrationFileRow.addWidget(self.btnCalibrationFilePath)
@@ -121,7 +130,8 @@ class MainWindow(QMainWindow):
 
         deepLearningFileRow = QHBoxLayout()
         deepLearningFileRow.addWidget(QLabel("Deep Learning"))
-        self.tbDeepLearningModelFilePath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\260120_seg_v2.pt")        
+        # self.tbDeepLearningModelFilePath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\260120_seg_v2.pt")        
+        self.tbDeepLearningModelFilePath = QLineEdit(self._seg_model_path)   
         deepLearningFileRow.addWidget(self.tbDeepLearningModelFilePath)
         self.btnDeepLearningFilePath = QPushButton("Load")
         deepLearningFileRow.addWidget(self.btnDeepLearningFilePath)
@@ -142,6 +152,18 @@ class MainWindow(QMainWindow):
         self.btnDeepLearningFilePath.clicked.connect(self.on_deep_learning_file_load)        
         self.btnMerge.clicked.connect(self.on_merge)
         self.btnInspect.clicked.connect(self.on_inspect)
+
+
+    def _set_path(self):
+        config = load_cfg()
+        # os 맞게 다시한번 확인
+        self._source_dir = str(Path(config["source_data_folder"]))
+        self._calib_path = str(Path(config["calibration_file"]))
+        self._seg_model_path = str(Path(config["deep_learning_model"]))
+
+        self.pcd.set_path(body_path=str(Path(config["bodyPath"])))
+
+
         
 
     def on_source_data_load(self):        
@@ -890,7 +912,28 @@ class MainWindow(QMainWindow):
         wb.save(out_xlsx_path)
         return out_xlsx_path
 
+def load_cfg():
+
+    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    
+    with open(config_path, 'r', encoding='utf-8') as f:
+        all_configs = json.load(f)
+    
+    # 현재 컴퓨터 이름 가져오기
+    hostname = socket.gethostname()
+
+    print(f"Computer Name : {hostname}")
+    
+    # 해당 컴퓨터의 설정 가져오기 (없으면 default 사용)
+    config = all_configs.get(hostname, all_configs.get("default", {}))
+    
+    print(f"Loading config for: {hostname}")
+    return config
+
+
+
 def main():
+    
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

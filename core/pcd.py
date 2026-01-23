@@ -15,6 +15,10 @@ CircleResult = Tuple[int, int, float, float, float]
 class PCD:
     def __init__(self):
         return
+    
+    def set_path(self, body_path):
+        self._body_path = body_path
+
 
     def merge_pcd(self, source_list : str, calibration_file : str, robotType : str, current_model : str) :
         path_dict = {}
@@ -112,7 +116,7 @@ class PCD:
             T_acc = T_list[idx]['Transform']
             T_List_v2.append(T_acc @ T_base_cam)
 
-        o3d.io.write_point_cloud(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\body.ply", merged_pcd, print_progress=True)
+        o3d.io.write_point_cloud(self._body_path, merged_pcd, print_progress=True)
 
         T_acc = T_acc_list_master + T_acc_list_source
         T_acc_sorted = sorted(T_acc, key=lambda d: int(d["number"]))
