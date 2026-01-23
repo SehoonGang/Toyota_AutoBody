@@ -28,6 +28,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import cv2
+import pickle
+
 
 import math
 import openpyxl
@@ -37,6 +39,11 @@ from openpyxl.utils import get_column_letter
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence, Union
 import socket
+
+
+FORCE_REFRESH = False  # True로 설정하면 캐시 무시하고 재계산
+
+
 
 @dataclass
 class RoiRow:
@@ -196,9 +203,53 @@ class MainWindow(QMainWindow):
 
     def on_merge(self):
         self.log.append("[INFO] Start to merge frames")
-        T_list, merged_pcd, reference_pcd = self.pcd.merge_pcd(self.utils.source_data_folder_files,
-                                                               self.utils.calibration_file_path,
-                                                               "fanuc", self.current_model())
+
+
+        # load Cache Start
+        cache_file = f"cache/merge_pcd_{self.current_model()}.pkl"
+
+        cache_dir = "cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = f"{cache_dir}/merge_pcd_{self.current_model()}.pkl"
+        merged_pcd_file = f"{cache_dir}/merged_pcd_{self.current_model()}.ply"
+
+        
+        if not FORCE_REFRESH and os.path.exists(cache_file):
+            print("Loading from cache...")
+            with open(cache_file, 'rb') as f:
+                cached_data = pickle.load(f)
+            T_list = cached_data['T_list']
+            reference_pcd = cached_data['reference_pcd']
+            merged_pcd = o3d.io.read_point_cloud(merged_pcd_file)
+        else:
+            print("No Cache Runnign merge_pcd func")
+            T_list, merged_pcd, reference_pcd = self.pcd.merge_pcd(
+                self.utils.source_data_folder_files,
+                self.utils.calibration_file_path,
+                "fanuc", 
+                self.current_model()
+            )
+            
+            # 캐시 저장
+            print("Saving to cache...")
+            o3d.io.write_point_cloud(merged_pcd_file, merged_pcd)
+            with open(cache_file, 'wb') as f:
+                pickle.dump({
+                    'T_list': T_list,
+                    'reference_pcd': reference_pcd
+                }, f)
+                
+        #load Cache End
+
+            # T_list, merged_pcd, reference_pcd = self.pcd.merge_pcd(self.utils.source_data_folder_files,
+            #                                                     self.utils.calibration_file_path,
+            #                                                     "fanuc", self.current_model())
+        
+
+        # Test Cached_data
+
+
+
         self.T_list = T_list
         cad_centers_array = np.array(self.utils.cad_data[self.current_model()]["cad_centers"], dtype=np.float32)
 
