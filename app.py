@@ -75,7 +75,8 @@ class PointCloudView(QWidget):
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__()        
+        super().__init__()
+        self._cad_scale = 1.0,        
         self.setWindowTitle("Body Hole Auto Insepction System")
         self.resize(1920, 1020)
         root = QWidget()
@@ -181,6 +182,12 @@ class MainWindow(QMainWindow):
             print(f"Body Pose UnKnown Left or Right yout Input: {body_pose}")
             print("set Right Pose default")
             self.radioR.setChecked(True)
+        
+
+
+        self._cad_scale = float(config["cad_scale"]),   
+
+        print("\n\n\n ")
 
 
 
@@ -253,7 +260,13 @@ class MainWindow(QMainWindow):
         self.T_list = T_list
         cad_centers_array = np.array(self.utils.cad_data[self.current_model()]["cad_centers"], dtype=np.float32)
 
-        moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
+        # moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
+        #                                                                     CAD_CENTERS=cad_centers_array,
+        #                                                                     align_points=np.asarray(reference_pcd, dtype=np.float64),
+        #                                                                     copy_pcd=True)
+        
+        moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad_v2(merged_pcd=merged_pcd,
+                                                                               master_cad_scale= self._cad_scale,
                                                                             CAD_CENTERS=cad_centers_array,
                                                                             align_points=np.asarray(reference_pcd, dtype=np.float64),
                                                                             copy_pcd=True)
@@ -265,6 +278,10 @@ class MainWindow(QMainWindow):
 
         cad_points = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"],
                             dtype=np.float32)
+        
+        # # cad point scale 곱하기
+        # cad_points = cad_points * self._cad_scale 
+
 
         pcd_cad = o3d.geometry.PointCloud()
         pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
@@ -1002,6 +1019,7 @@ def main():
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
+
     sys.exit(app.exec())
 
 if __name__ == "__main__":    
