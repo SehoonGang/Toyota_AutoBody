@@ -14,6 +14,7 @@ CircleResult = Tuple[int, int, float, float, float]
 
 class PCD:
     def __init__(self):
+        self._verbose = False
         return
     
     def set_path(self, body_path):
@@ -444,12 +445,14 @@ class PCD:
             rx, ry, rr, score, arc_cov = best
             gx = rx + x_off
             gy = ry + y_off
+            
 
-            # cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
-            # cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
-            # cv2.imshow("final(best overall)", vis_final)
-            # cv2.waitKey(0)
-            # cv2.destroyAllWindows()
+            if self._verbose == True:
+                cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
+                cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
+                cv2.imshow("final(best overall)", vis_final)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
 
             results.append((gx, gy, rr, score, arc_cov))
 

@@ -99,9 +99,9 @@ class MainWindow(QMainWindow):
 
         rightLayout.addWidget(QLabel("Model"))
         self.radioGroup = QButtonGroup(self)
-        self.radioL = QRadioButton("L Model")
-        self.radioR = QRadioButton("R Model")
-        self.radioR.setChecked(True)
+        # self.radioL = QRadioButton("L Model")
+        # self.radioR = QRadioButton("R Model")
+        # self.radioR.setChecked(True)
         self.radioGroup.addButton(self.radioL)
         self.radioGroup.addButton(self.radioR) 
         radioRow = QHBoxLayout()
@@ -162,6 +162,20 @@ class MainWindow(QMainWindow):
         self._seg_model_path = str(Path(config["deep_learning_model"]))
 
         self.pcd.set_path(body_path=str(Path(config["bodyPath"])))
+        body_pose = str(config["BodyPosition"])
+
+        self.radioL = QRadioButton("L Model")
+        self.radioR = QRadioButton("R Model")
+        if body_pose == "Left":
+            self.radioL.setChecked(True)
+        elif body_pose == "Right":
+            self.radioR.setChecked(True)
+        else:
+            print(f"Body Pose UnKnown Left or Right yout Input: {body_pose}")
+            print("set Right Pose default")
+            self.radioR.setChecked(True)
+
+
 
 
         
