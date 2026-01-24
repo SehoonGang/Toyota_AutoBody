@@ -18,5 +18,14 @@
         "calibration_file": "",
         "deep_learning_model": "",
          "cad_scale" : 1.0055786
+    },
+    "sehoon" :
+    {
+        "source_data_folder": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\RH",
+        "calibration_file": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\cam_robot_extrinsic_0_1_hand_eye.yml",
+        "deep_learning_model": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\260123_inspection_model.pt",
+        "bodyPath": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\body.ply",
+        "BodyPosition": "Right",
+        "cad_scale" : 1
     }
 }

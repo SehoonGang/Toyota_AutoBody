@@ -62,22 +62,24 @@ class PCD:
                             roi_scale=2.6,          # 2.2 -> 2.6 (바깥 그림자까지 ROI에 더 여유)
                             roi_half_min=80,        # 60 -> 80 (너무 타이트하면 바깥원 잘림)
                             roi_half_max=300,       # 260 -> 300
-
                             band_px=6.0,            # 4.0 -> 6.0 (검증 밴드 넓혀서 바깥 에지 포함)
                             arc_min=0.10,           # 0.15 -> 0.10 (그림자 때문에 원호가 덜 잡혀도 통과)
-
                             dp=1.2,
                             minDist=120,            # 140 -> 120 (큰 의미 없지만 ROI내 1개면 낮춰도 됨)
-
                             param1=70,              # 120 -> 90 (에지 더 뽑히게)
                             param2=16,              # 24 -> 16 (누적 임계 낮춰 바깥 원 같은 약한 원도 후보로)
-
-                            minRadius=30,           # ✅ 핵심: inner edge 배제
+                            minRadius=20,           # ✅ 핵심: inner edge 배제
                             maxRadius=60          # ✅ 핵심: 바깥 원 범위로 제한
                         )
-                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=806, y = 911, r = 100)
+                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=432, y = 1102, r = 100)
                     if circles2d:
                         detected_circle_centers[frame_number].append(circles2d[0])
+                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=642, y = 701, r = 100)
+                    if circles2d:
+                        detected_circle_centers[frame_number].append(circles2d[0])
+                    circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=806, y = 911, r = 100)
+                    if circles2d:
+                        detected_circle_centers[frame_number].append(circles2d[0])                    
                 elif frame_number == '3':
                     circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting, x=2106, y = 673, r = 100)
                     if circles2d:
