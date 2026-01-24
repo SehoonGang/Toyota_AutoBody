@@ -41,7 +41,7 @@ from typing import Iterable, Optional, Sequence, Union
 import socket
 
 
-FORCE_REFRESH = False  # True로 설정하면 캐시 무시하고 재계산
+FORCE_REFRESH = True  # True로 설정하면 캐시 무시하고 재계산
 
 
 
@@ -84,8 +84,6 @@ class MainWindow(QMainWindow):
         self.utils = Utils()
         self.pcd = PCD()
         self._set_path()
-
-
 
         
         leftWidget = QWidget()
@@ -182,16 +180,7 @@ class MainWindow(QMainWindow):
             print(f"Body Pose UnKnown Left or Right yout Input: {body_pose}")
             print("set Right Pose default")
             self.radioR.setChecked(True)
-        
-
-
         self._cad_scale = float(config["cad_scale"]),   
-
-        print("\n\n\n ")
-
-
-
-
         
 
     def on_source_data_load(self):        
@@ -260,13 +249,7 @@ class MainWindow(QMainWindow):
         self.T_list = T_list
         cad_centers_array = np.array(self.utils.cad_data[self.current_model()]["cad_centers"], dtype=np.float32)
 
-        # moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
-        #                                                                     CAD_CENTERS=cad_centers_array,
-        #                                                                     align_points=np.asarray(reference_pcd, dtype=np.float64),
-        #                                                                     copy_pcd=True)
-        
-        moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad_v2(merged_pcd=merged_pcd,
-                                                                               master_cad_scale= self._cad_scale,
+        moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
                                                                             CAD_CENTERS=cad_centers_array,
                                                                             align_points=np.asarray(reference_pcd, dtype=np.float64),
                                                                             copy_pcd=True)
@@ -276,8 +259,7 @@ class MainWindow(QMainWindow):
 
         pcd_base = copy.deepcopy(self.result_pcd)   # 또는 self.result_pcd.voxel_down_sample(...)
 
-        cad_points = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"],
-                            dtype=np.float32)
+        cad_points = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)
         
         # # cad point scale 곱하기
         # cad_points = cad_points * self._cad_scale 
@@ -332,7 +314,7 @@ class MainWindow(QMainWindow):
                 X[ys_idx, xs_idx],
                 Y[ys_idx, xs_idx],
                 Z[ys_idx, xs_idx]
-            ], axis=1)
+            ], axis=1)            
             
             T_cam_to_world = self.T_list[i]
             T_world_to_cad = self.result_T
@@ -354,10 +336,11 @@ class MainWindow(QMainWindow):
             pcd_pts_cad = o3d.geometry.PointCloud()
             pcd_pts_cad.points = o3d.utility.Vector3dVector(pp)
 
-            for roi_id, center in enumerate(cad_points, start=1):
-                dist = np.linalg.norm(pts_cam - center, axis=1)
+            seg_pad = 150
 
-                mask_roi_3d = dist <= 4
+            for roi_id, center in enumerate(cad_points, start=1):
+                dist = np.linalg.norm(pts_cam - center, axis=1)                
+                mask_roi_3d = dist <= 8
                 num_roi_pts = np.count_nonzero(mask_roi_3d)
 
                 if num_roi_pts == 0:
@@ -370,7 +353,7 @@ class MainWindow(QMainWindow):
                 y_min, y_max = int(roi_y.min()), int(roi_y.max())
                 x_min, x_max = int(roi_x.min()), int(roi_x.max())
 
-                pad = 150
+                pad = seg_pad
                 y_min = max(y_min - pad, 0)
                 x_min = max(x_min - pad, 0)
                 y_max = min(y_max + pad, img_h - 1)
@@ -404,8 +387,7 @@ class MainWindow(QMainWindow):
                 Hm, Wm = full_mask_local.shape
 
                 if (Hm, Wm) != (ch, cw):
-                    full_mask_local = cv2.resize(full_mask_local.astype(np.uint8), (cw, ch),
-                                                interpolation=cv2.INTER_NEAREST).astype(bool)                 
+                    full_mask_local = cv2.resize(full_mask_local.astype(np.uint8), (cw, ch), interpolation=cv2.INTER_NEAREST).astype(bool)                 
                 
                 mask_resized = full_mask_local
                 in_crop = (
@@ -434,29 +416,10 @@ class MainWindow(QMainWindow):
             pose_dict[frame_number] = pose
 
         self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
-        pcd_base = copy.deepcopy(self.result_pcd)        
-        pcd_base = self.result_pcd.voxel_down_sample(0.5)
-
-        pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
-
-        vis = o3d.visualization.Visualizer()
-        vis.create_window()
-        vis.add_geometry(pcd_base)
-        vis.add_geometry(pcd_holes)        
-        opt = vis.get_render_option()
-        opt.point_size = 4.0
-        vis.run()
-        vis.destroy_window()
-
-        self.set_pointcloud(pcd_holes)
-
-    def visualize_roi_hole_points(self, roi_hole_points_dict, roi_id):
-        if roi_id not in roi_hole_points_dict:
-            print(f"[WARN] roi_id {roi_id} not found")
-            return
+        # pcd_base = copy.deepcopy(self.result_pcd)        
+        # pcd_base = self.result_pcd.voxel_down_sample(0.5)
 
         # pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
-        # pcd_holes.paint_uniform_color([1.0, 0.0, 0.0])
 
         # vis = o3d.visualization.Visualizer()
         # vis.create_window()
@@ -600,12 +563,6 @@ class MainWindow(QMainWindow):
                                                                      center=center,
                                                                      min_max_threshold = 0.2)
             
-            # cad <-> welding 중심점 거리 비교
-
-            print("filtered has colors:", pcd_filtered.has_colors())
-            print("near has colors:", pcd_near.has_colors())
-            print("far has colors:", pcd_far.has_colors())
-
             if w_xyz is None or np.asarray(w_xyz).size != 3:
                 print(f"[ROI {roi_id}] w_xyz invalid: {w_xyz} (is_welding={is_welding})")
                 continue
@@ -626,16 +583,16 @@ class MainWindow(QMainWindow):
             # w_xyz: np.array([w_x, w_y, w_z])
             # cad_center_point: (3,) array-like
 
-            w_sphere   = sphere_at(w_xyz, radius=0.5, color=(0.5, 0.5, 0.5))   # 빨강: w_xyz
-            cad_sphere = sphere_at(cad_center_point, radius=0.5, color=(0.0, 0, 1)) 
+            # w_sphere   = sphere_at(w_xyz, radius=0.5, color=(0.5, 0.5, 0.5))   # 빨강: w_xyz
+            # cad_sphere = sphere_at(cad_center_point, radius=0.5, color=(0.0, 0, 1)) 
 
-            print(rf"Welding Point {roi_id} : CAD X : {cad_center_point[0]} / CAD Y : {cad_center_point[1]} / CAD Z : {cad_center_point[2]}")
-            print(rf"Welding Point {roi_id} : SRC X : {source_center_point[0]} / SRC Y : {source_center_point[1]} / SRC Z : {source_center_point[2]}")
-            print(rf"Welding Point {roi_id} : DIST : {distance}")
-            samples.append(RoiRow(roi_id=roi_id, cad_xyz=(cad_center_point[0], cad_center_point[1], cad_center_point[2]), source_xyz=(source_center_point[0], source_center_point[1], source_center_point[2]), real_ng=is_welding, distance_threshold= 4))
+            # print(rf"Welding Point {roi_id} : CAD X : {cad_center_point[0]} / CAD Y : {cad_center_point[1]} / CAD Z : {cad_center_point[2]}")
+            # print(rf"Welding Point {roi_id} : SRC X : {source_center_point[0]} / SRC Y : {source_center_point[1]} / SRC Z : {source_center_point[2]}")
+            # print(rf"Welding Point {roi_id} : DIST : {distance}")
+            # samples.append(RoiRow(roi_id=roi_id, cad_xyz=(cad_center_point[0], cad_center_point[1], cad_center_point[2]), source_xyz=(source_center_point[0], source_center_point[1], source_center_point[2]), real_ng=is_welding, distance_threshold= 4))
             # pcd_near.paint_uniform_color((0,1,0))
-            pcd_far.paint_uniform_color((1, 0, 0))
-            o3d.visualization.draw_geometries([pcd_near, pcd_far, cad_sphere, w_sphere])
+            # pcd_far.paint_uniform_color((1, 0, 0))
+            # o3d.visualization.draw_geometries([pcd_near, pcd_far, cad_sphere, w_sphere])
             
         samples.sort(key=lambda r: r.roi_id)
         # self.export_roi_distance_excel(samples, rf"{self.current_model()}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")

@@ -474,12 +474,12 @@ class PCD:
             gy = ry + y_off
             
 
-            if self._verbose == True:
-                cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
-                cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
-                cv2.imshow("final(best overall)", vis_final)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
+            # if self._verbose == True:
+            #     cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
+            #     cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
+            #     cv2.imshow("final(best overall)", vis_final)
+            #     cv2.waitKey(0)
+            #     cv2.destroyAllWindows()
 
             results.append((gx, gy, rr, score, arc_cov))
 
@@ -962,7 +962,7 @@ class PCD:
         ]
 
         # ✅ measured(=merged) -> CAD 변환 T 구하기
-        T_meas_to_cad, _, report = self.align_centers_by_3points_auto_permute(
+        T_meas_to_cad, _, report = self.align_centers_by_npoints_auto_permute(
             CAD_CENTERS=CAD_CENTERS,
             align_points=align_points,
             measured_center_records=dummy_records
@@ -1038,9 +1038,10 @@ class PCD:
 
         return moved_pcd, T_meas_to_cad, report
     
-    def align_centers_by_3points_auto_permute(self, # 이거는 detect -> cad로 변환하는 기존 구조.... 귀찮아서 위 함수(align_points_by_3ref_auto_permute) 통합 X
-        CAD_CENTERS: np.ndarray,          # (3,3)
-        align_points: np.ndarray,         # (3,3)
+    def align_centers_by_npoints_auto_permute(
+        self,
+        CAD_CENTERS: np.ndarray,          # (N,3)
+        align_points: np.ndarray,         # (N,3) measured에서 얻은 점들 (순서 섞여도 OK)
         measured_center_records: list     # [{"index": i, "center": [x,y,z]}, ...]
     ) -> Tuple[np.ndarray, list, Dict[str, Any]]:
         """
@@ -1049,55 +1050,66 @@ class PCD:
         - moved_center_records: [{"index": i, "center": [x,y,z]}, ...]
         - report
         """
+
         CAD_CENTERS = np.asarray(CAD_CENTERS, dtype=np.float64)
         align_points = np.asarray(align_points, dtype=np.float64)
 
-        if CAD_CENTERS.shape != (3, 3):
-            raise ValueError("CAD_CENTERS는 (3,3) 이어야 합니다.")
-        if align_points.shape != (3, 3):
-            raise ValueError("align_points는 (3,3) 이어야 합니다.")
+        if CAD_CENTERS.ndim != 2 or CAD_CENTERS.shape[1] != 3:
+            raise ValueError("CAD_CENTERS는 (N,3) 이어야 합니다.")
+        if align_points.ndim != 2 or align_points.shape[1] != 3:
+            raise ValueError("align_points는 (N,3) 이어야 합니다.")
+        if CAD_CENTERS.shape[0] != align_points.shape[0]:
+            raise ValueError("CAD_CENTERS와 align_points의 점 개수(N)가 같아야 합니다.")
+
+        N = CAD_CENTERS.shape[0]
+        if N < 3:
+            raise ValueError("최소 3점이 필요합니다.")
         if len(measured_center_records) == 0:
             raise ValueError("measured_center_records가 비어 있습니다.")
 
+        # ⚠️ permutation 폭발 방지 가드 (원하면 숫자 조절)
+        # 7! = 5040, 8! = 40320 ...부터 체감상 느려짐
+        if N > 7:
+            raise ValueError(
+                f"N={N}은 permutation({N}!)이 너무 큽니다. "
+                "N<=7로 줄이거나, Hungarian/nearest 매칭 방식으로 바꾸세요."
+            )
+
         # ---- measured centers 분리 ----
-        meas_xyz = np.array(
-            [r["center"] for r in measured_center_records],
-            dtype=np.float64
-        )
+        meas_xyz = np.array([r["center"] for r in measured_center_records], dtype=np.float64)
         meas_idx = [int(r["index"]) for r in measured_center_records]
 
-        best = None  # (rmse, perm, T, aligned3)
+        best = None  # (rmse, perm, T, alignedN)
 
-        for perm in permutations([0, 1, 2], 3):
-            src = align_points[list(perm), :]
+        # perm: align_points의 행 순서를 어떻게 재배치할지
+        for perm in permutations(range(N), N):
+            src = align_points[list(perm), :]  # (N,3)
             T = self.rigid_transform_kabsch(src_pts=src, dst_pts=CAD_CENTERS)
-            aligned3 = self.apply_T(src, T)
-            e = self._rmse(aligned3, CAD_CENTERS)
+            alignedN = self.apply_T(src, T)
+            e = self._rmse(alignedN, CAD_CENTERS)
 
             if (best is None) or (e < best[0]):
-                best = (e, perm, T, aligned3)
+                best = (e, perm, T, alignedN)
 
-        best_rmse, best_perm, best_T, best_aligned3 = best
+        best_rmse, best_perm, best_T, best_alignedN = best
 
         # ---- 전체 measured center 이동 ----
         moved_xyz = self.apply_T(meas_xyz, best_T)
 
         moved_center_records = []
         for idx, xyz in zip(meas_idx, moved_xyz):
-            moved_center_records.append({
-                "index": idx,
-                "center": xyz.tolist()
-            })
+            moved_center_records.append({"index": idx, "center": xyz.tolist()})
 
-        per_point_err = np.linalg.norm(best_aligned3 - CAD_CENTERS, axis=1)
+        per_point_err = np.linalg.norm(best_alignedN - CAD_CENTERS, axis=1)
 
         report = {
+            "num_points": int(N),
             "best_perm_src_index_order": list(best_perm),
             "rmse": float(best_rmse),
             "per_point_error": per_point_err.tolist(),
             "max_error": float(np.max(per_point_err)),
             "T_meas_to_cad": best_T.tolist(),
-            "aligned3_after_T": best_aligned3.tolist(),
+            "alignedN_after_T": best_alignedN.tolist(),
         }
 
         return best_T, moved_center_records, report
