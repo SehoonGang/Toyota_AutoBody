@@ -353,7 +353,7 @@ class MainWindow(QMainWindow):
                 y_min, y_max = int(roi_y.min()), int(roi_y.max())
                 x_min, x_max = int(roi_x.min()), int(roi_x.max())
 
-                pad = 200
+                pad = 150
                 y_min = max(y_min - pad, 0)
                 x_min = max(x_min - pad, 0)
                 y_max = min(y_max + pad, img_h - 1)
@@ -382,8 +382,8 @@ class MainWindow(QMainWindow):
                     print(f"[INFO] ROI : mask 개수 0 (view {i}).")
                     continue
 
-                mask_bin = (masks_yolo > 0.8)
-                full_mask_local = np.any(mask_bin, axis=0)                
+                mask_bin = (masks_yolo > 0.5)
+                full_mask_local = np.any(mask_bin, axis=0)
                 Hm, Wm = full_mask_local.shape
 
                 if (Hm, Wm) != (ch, cw):
@@ -417,8 +417,26 @@ class MainWindow(QMainWindow):
             pose_dict[frame_number] = pose
 
         self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
-        # pcd_base = copy.deepcopy(self.result_pcd)        
-        # pcd_base = self.result_pcd.voxel_down_sample(0.5)
+        pcd_base = copy.deepcopy(self.result_pcd)        
+        pcd_base = self.result_pcd.voxel_down_sample(0.5)
+
+        pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
+
+        vis = o3d.visualization.Visualizer()
+        vis.create_window()
+        vis.add_geometry(pcd_base)
+        vis.add_geometry(pcd_holes)        
+        opt = vis.get_render_option()
+        opt.point_size = 4.0
+        vis.run()
+        vis.destroy_window()
+
+        self.set_pointcloud(pcd_holes)
+
+    def visualize_roi_hole_points(self, roi_hole_points_dict, roi_id):
+        if roi_id not in roi_hole_points_dict:
+            print(f"[WARN] roi_id {roi_id} not found")
+            return
 
         # pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
         # pcd_holes.paint_uniform_color([1.0, 0.0, 0.0])
@@ -457,25 +475,31 @@ class MainWindow(QMainWindow):
         self.view3d.scatter = gl.GLScatterPlotItem(pos=pts, color=cols, size=float(size), pxMode=True)
         self.view3d.view.addItem(self.view3d.scatter)
 
-    def roi_dict_to_pcd(self, roi_hole_points_dict: dict[int, list[np.ndarray]]) -> o3d.geometry.PointCloud:
+    def roi_dict_to_pcd(self, roi_hole_points_dict: dict[int, dict[int, np.ndarray]]) -> o3d.geometry.PointCloud:
         all_pts = []
-        for roi_id, chunks in roi_hole_points_dict.items():
-            for pts in chunks:
+        
+        # 첫 번째 dict: roi_id, 두 번째 dict: 내부 index 또는 key
+        for roi_id, hole_dict in roi_hole_points_dict.items():
+            for frame_id, pts in hole_dict.items(): # 리스트 대신 딕셔너리 순회
                 if pts is None or len(pts) == 0:
+                    print(rf">>>>>>> point count is zero : {roi_id}_{frame_id}")
                     continue
+                
+                # pts가 이미 (N, 3) 형태의 numpy array라고 가정합니다.
                 all_pts.append(np.asarray(pts, dtype=np.float64))
 
         if not all_pts:
             return o3d.geometry.PointCloud()
 
+        # 모든 포인트를 하나로 합칩니다.
         P = np.vstack(all_pts)
 
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(P)
         
+        # 가시성을 위해 색상 지정 (연두색)
         pcd.paint_uniform_color([0.0, 1.0, 0.2])
-        return pcd
-
+        return pcd    
 
     def current_model(self):        
         return 'LH' if self.radioL.isChecked() else 'RH'
