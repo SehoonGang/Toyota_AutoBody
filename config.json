@@ -4,7 +4,8 @@
         "calibration_file": "C:\\Users\\leejm90\\Desktop\\CLE\\TTS_AutoBody\\Sehoon\\Dataset\\data_260123\\cam_robot_extrinsic_0_1_hand_eye.yml",
         "deep_learning_model": "C:\\Users\\leejm90\\Desktop\\CLE\\TTS_AutoBody\\Sehoon\\Dataset\\data_260123\\260123_inspection_model.pt",
         "bodyPath": "C:\\Users\\leejm90\\Desktop\\CLE\\TTS_AutoBody\\Sehoon\\Dataset\\data_260123\\body.ply",
-        "BodyPosition": "Left"
+        "BodyPosition": "Left",
+        "cad_scale" : 1.0055786
 
     },
     "LAPTOP-XYZ789": {
@@ -15,6 +16,7 @@
     "default": {
         "source_data_folder": "",
         "calibration_file": "",
-        "deep_learning_model": ""
+        "deep_learning_model": "",
+         "cad_scale" : 1.0055786
     }
 }

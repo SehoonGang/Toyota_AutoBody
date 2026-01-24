@@ -10,11 +10,13 @@ import cv2
 import copy
 from typing import Any, Dict, List, Optional, Tuple
 from .util.circleCenter import fit_circle_center_3d
+from .util.transform_utils import calculate_transformation_matrix
 CircleResult = Tuple[int, int, float, float, float]
 
 class PCD:
     def __init__(self):
-        self._verbose = False
+        self._verbose = True
+        self._verbose_transform = True
         return
     
     def set_path(self, body_path):
@@ -940,6 +942,65 @@ class PCD:
             align_points=align_points,
             measured_center_records=dummy_records
         )
+
+        T_meas_to_cad = np.asarray(T_meas_to_cad, dtype=np.float64)
+
+        # ✅ merged_pcd 전체에 변환 적용
+        moved_pcd = o3d.geometry.PointCloud(merged_pcd) if copy_pcd else merged_pcd
+        moved_pcd.transform(T_meas_to_cad)
+
+        if not return_report:
+            report = None
+
+        return moved_pcd, T_meas_to_cad, report
+    
+    def move_merged_pcd_to_cad_v2(
+        self,
+        merged_pcd: o3d.geometry.PointCloud,
+        master_cad_scale,
+        CAD_CENTERS: np.ndarray,     # (3,3) CAD 기준 3점
+        align_points: np.ndarray,    # (3,3) merged 좌표계에서 얻은 3점 (순서 섞여도 OK)
+        *,
+        copy_pcd: bool = True,       # True면 원본 보존
+        return_report: bool = False
+    ) -> Tuple[o3d.geometry.PointCloud, np.ndarray, Optional[Dict[str, Any]]]:
+        if merged_pcd is None:
+            raise ValueError("merged_pcd가 None 입니다.")
+        if len(merged_pcd.points) == 0:
+            raise ValueError("merged_pcd에 포인트가 없습니다.")
+        
+        # if self._verbose_transform:
+        #     T_meas_to_cad, report = compute_transformation_matrix_with_verification(source_points=align_points, master_points=CAD_CENTERS)
+        # else:
+        #     T_meas_to_cad = compute_transformation_matrix(source_points=align_points, master_points=CAD_CENTERS)
+        
+
+        # 점의 순서가 맞지 않아 source_order, master_order 를 생성함
+        transformation_matrix, aligned_points, errors = calculate_transformation_matrix(
+            source_points_original= align_points, 
+            master_points_original = CAD_CENTERS,
+            source_order=[2, 1, 0],
+            master_order=[0, 2, 1],
+            # master_scale=1.0055786,
+            master_scale=master_cad_scale,
+            verbose=self._verbose
+        )
+        T_meas_to_cad = transformation_matrix
+        
+
+
+        # # dummy records (함수 시그니처 맞추기용) - 실제로는 PCD 변환만 필요
+        # dummy_records = [
+        #     {"index": i, "center": align_points[i].tolist()}
+        #     for i in range(align_points.shape[0])
+        # ]
+
+        # # ✅ measured(=merged) -> CAD 변환 T 구하기
+        # T_meas_to_cad, _, report = self.align_centers_by_3points_auto_permute(
+        #     CAD_CENTERS=CAD_CENTERS,
+        #     align_points=align_points,
+        #     measured_center_records=dummy_records
+        # )
 
         T_meas_to_cad = np.asarray(T_meas_to_cad, dtype=np.float64)
 
