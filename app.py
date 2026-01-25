@@ -41,7 +41,7 @@ from typing import Iterable, Optional, Sequence, Union
 import socket
 
 
-FORCE_REFRESH = True  # True로 설정하면 캐시 무시하고 재계산
+FORCE_REFRESH = False  # True로 설정하면 캐시 무시하고 재계산
 
 
 
@@ -314,7 +314,14 @@ class MainWindow(QMainWindow):
                 X[ys_idx, xs_idx],
                 Y[ys_idx, xs_idx],
                 Z[ys_idx, xs_idx]
-            ], axis=1)            
+            ], axis=1)
+
+            image_bgr = cv2.imread(texture_path, cv2.IMREAD_COLOR)
+            if image_bgr is None:
+                raise ValueError(f"Failed to read texture: {texture_path}")
+            
+            bgr = image_bgr[ys_idx, xs_idx]
+            rgb = bgr[:, ::-1].astype(np.float64) / 255.0 
             
             T_cam_to_world = self.T_list[i]
             T_world_to_cad = self.result_T
@@ -323,7 +330,13 @@ class MainWindow(QMainWindow):
 
             pts_cam = self.transform_points(pts_cam, T_cam_to_world)   
             pts_cam = self.transform_points(pts_cam, T_world_to_cad)
-            frame_pcd[frame_number] = pts_cam
+
+            frame_pcd[frame_number] = {
+                "points" : pts_cam,
+                "rgb" : rgb,
+                "ys_idx" : ys_idx,
+                "xs_idx" : xs_idx
+            }
 
             image_for_seg = cv2.imread(texture_path, cv2.IMREAD_COLOR)
             img_h, img_w, _ = image_for_seg.shape
@@ -332,11 +345,12 @@ class MainWindow(QMainWindow):
             pcd_cad = o3d.geometry.PointCloud()
             pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
             
+            
             pp = np.asarray(pts_cam, dtype=np.float64).reshape(-1, 3)
             pcd_pts_cad = o3d.geometry.PointCloud()
             pcd_pts_cad.points = o3d.utility.Vector3dVector(pp)
 
-            seg_pad = 150
+            seg_pad = 120
 
             for roi_id, center in enumerate(cad_points, start=1):
                 dist = np.linalg.norm(pts_cam - center, axis=1)                
@@ -372,7 +386,12 @@ class MainWindow(QMainWindow):
                 if ch < 16 or cw < 16:                    
                     continue
 
+
                 results = self.seg_model(crop_img, device='cuda:0', verbose=False)
+                # cv2.imwrite(rf"C:\Users\SehoonKang\Desktop\s\RH\crop_{frame_number}_{roi_id}.png", crop_img)
+                # for i, result in enumerate(results):
+                #     res_img = result.plot()
+                #     cv2.imwrite(rf"C:\Users\SehoonKang\Desktop\s\RH\seg_{frame_number}_{roi_id}.png", res_img)
 
                 if len(results) == 0 or results[0].masks is None:
                     continue
@@ -410,27 +429,26 @@ class MainWindow(QMainWindow):
                 if n_hole > 0:
                     roi_hole_points_dict.setdefault(roi_id, {})[frame_number] = roi_hole_pts
 
-
             pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]
             pose = pose[:6]
             pose_dict[frame_number] = pose
 
         self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
-        # pcd_base = copy.deepcopy(self.result_pcd)        
-        # pcd_base = self.result_pcd.voxel_down_sample(0.5)
+        pcd_base = copy.deepcopy(self.result_pcd)        
+        pcd_base = self.result_pcd.voxel_down_sample(0.5)
 
-        # pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
+        pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
 
-        # vis = o3d.visualization.Visualizer()
-        # vis.create_window()
-        # vis.add_geometry(pcd_base)
-        # vis.add_geometry(pcd_holes)        
-        # opt = vis.get_render_option()
-        # opt.point_size = 4.0
-        # vis.run()
-        # vis.destroy_window()
+        vis = o3d.visualization.Visualizer()
+        vis.create_window()
+        vis.add_geometry(pcd_base)
+        vis.add_geometry(pcd_holes)        
+        opt = vis.get_render_option()
+        opt.point_size = 4.0
+        vis.run()
+        vis.destroy_window()
 
-        # self.set_pointcloud(pcd_holes)
+        self.set_pointcloud(pcd_holes)
 
     def set_pointcloud(self, pcd: o3d.geometry.PointCloud, *, size: float = 15.0, sampling_rate : 0.5):
         pcd = pcd.voxel_down_sample(sampling_rate)
@@ -513,34 +531,41 @@ class MainWindow(QMainWindow):
     
     def inspect_real_welding_point(self,                                 
                                    roi_hole_points_dict : dict[int, dict[int, np.ndarray]],
-                                   frame_pcd : dict[int, o3d.geometry.PointCloud],
+                                   frame_pcd : dict[int, dict],
                                    pad: int = 30) : 
         samples = []        
         for roi_id, pcd_dict in roi_hole_points_dict.items():
-            print(rf"{roi_id+1}번째 타흔 확인")
+            print(rf"{roi_id}번째 타흔 확인")
 
             # 1. frame 별로 가장 point cloud 수가 많은 것의
             if not pcd_dict:
                 print("  [WARN] pcd_dict empty")
                 continue
+            
             best_frame_id, best_roi_pts = max(
                 pcd_dict.items(),
                 key=lambda kv: 0 if kv[1] is None else int(np.asarray(kv[1]).shape[0])
             )
 
-            best_frame_pcd = frame_pcd.get(best_frame_id, None)
-            if best_frame_pcd is None:
+            frame_data = frame_pcd.get(best_frame_id, None)
+            if frame_data is None:
                 print(f"[ROI {roi_id}] best_frame_pcd is None (frame_id={best_frame_id})")
                 continue
             
-            if isinstance(best_frame_pcd, o3d.geometry.PointCloud):
-                frame_pts = np.asarray(best_frame_pcd.points, dtype=np.float64)
-                frame_pcd_o3d = best_frame_pcd
-            else:
-                # best_frame_pcd가 np.ndarray라고 가정 (N,3)
-                frame_pts = np.asarray(best_frame_pcd, dtype=np.float64).reshape(-1, 3)
-                frame_pcd_o3d = o3d.geometry.PointCloud()
-                frame_pcd_o3d.points = o3d.utility.Vector3dVector(frame_pts)
+            frame_pts = np.asarray(frame_data.get("points", None), dtype=np.float64) if frame_data.get("points", None) is not None else None
+            frame_rgb = frame_data.get("rgb", None)
+
+            if frame_pts is None or frame_pts.size == 0:
+                print(f"[ROI {roi_id}] frame_pts empty (frame_id={best_frame_id})")
+                continue
+            frame_pts = frame_pts.reshape(-1, 3)
+
+            # rgb가 있으면 shape 맞는지 체크 (없으면 None 유지)
+            if frame_rgb is not None:
+                frame_rgb = np.asarray(frame_rgb, dtype=np.float64)
+                if frame_rgb.shape[0] != frame_pts.shape[0]:
+                    print(f"[WARN] rgb length mismatch: pts={frame_pts.shape[0]} rgb={frame_rgb.shape[0]} -> ignore rgb")
+                    frame_rgb = None
 
             # 2. 평면 피팅
             center = np.asarray(best_roi_pts, dtype=np.float64).mean(axis=0)            
@@ -551,7 +576,14 @@ class MainWindow(QMainWindow):
                 print(f"[ROI {roi_id}] crop empty (pad={pad})")
                 continue
 
-            pcd_crop = frame_pcd_o3d.select_by_index(crop_idx.tolist())
+            crop_pts = frame_pts[crop_idx]
+            pcd_crop = o3d.geometry.PointCloud()
+            pcd_crop.points = o3d.utility.Vector3dVector(crop_pts)
+
+            if frame_rgb is not None:
+                crop_rgb = frame_rgb[crop_idx]  # (Nc,3)
+                pcd_crop.colors = o3d.utility.Vector3dVector(np.clip(crop_rgb, 0.0, 1.0))
+
             pcd_filtered, inlier_idx = pcd_crop.remove_radius_outlier(
                 nb_points=30,
                 radius=1.0
@@ -561,7 +593,7 @@ class MainWindow(QMainWindow):
                                                                      distance_threshold=0.05,
                                                                      frame_idx = self.frame_idx[best_frame_id],
                                                                      center=center,
-                                                                     min_max_threshold = 0.2)
+                                                                     min_max_threshold = 0.1)
             
             if w_xyz is None or np.asarray(w_xyz).size != 3:
                 print(f"[ROI {roi_id}] w_xyz invalid: {w_xyz} (is_welding={is_welding})")
@@ -573,27 +605,24 @@ class MainWindow(QMainWindow):
 
             distance = self.distance_3d(cad_center_point, source_center_point)
 
-            def sphere_at(p, radius=2.0, color=(1.0, 0.0, 0.0)):
-                p = np.asarray(p, dtype=np.float64).reshape(3)
-                s = o3d.geometry.TriangleMesh.create_sphere(radius=float(radius))
-                s.translate(p)
-                s.paint_uniform_color(color)
-                return s
-
-            # w_xyz: np.array([w_x, w_y, w_z])
-            # cad_center_point: (3,) array-like
-
+            # def sphere_at(p, radius=2.0, color=(1.0, 0.0, 0.0)):
+            #     p = np.asarray(p, dtype=np.float64).reshape(3)
+            #     s = o3d.geometry.TriangleMesh.create_sphere(radius=float(radius))
+            #     s.translate(p)
+            #     s.paint_uniform_color(color)
+            #     return s
+            
             # w_sphere   = sphere_at(w_xyz, radius=0.5, color=(0.5, 0.5, 0.5))   # 빨강: w_xyz
             # cad_sphere = sphere_at(cad_center_point, radius=0.5, color=(0.0, 0, 1)) 
 
             # print(rf"Welding Point {roi_id} : CAD X : {cad_center_point[0]} / CAD Y : {cad_center_point[1]} / CAD Z : {cad_center_point[2]}")
             # print(rf"Welding Point {roi_id} : SRC X : {source_center_point[0]} / SRC Y : {source_center_point[1]} / SRC Z : {source_center_point[2]}")
             # print(rf"Welding Point {roi_id} : DIST : {distance}")
-            # samples.append(RoiRow(roi_id=roi_id, cad_xyz=(cad_center_point[0], cad_center_point[1], cad_center_point[2]), source_xyz=(source_center_point[0], source_center_point[1], source_center_point[2]), real_ng=is_welding, distance_threshold= 4))
-            # pcd_near.paint_uniform_color((0,1,0))
-            # pcd_far.paint_uniform_color((1, 0, 0))
-            # o3d.visualization.draw_geometries([pcd_near, pcd_far, cad_sphere, w_sphere])
-            
+            print(rf"{roi_id} >>>>> {is_welding}")
+            if roi_id == 49 or roi_id == 50:
+                pcd_near.paint_uniform_color((1.0, 0.0, 0.0))
+                o3d.visualization.draw_geometries([pcd_far, pcd_near],window_name=f"ROI {roi_id}")
+            samples.append(RoiRow(roi_id=roi_id, cad_xyz=(cad_center_point[0], cad_center_point[1], cad_center_point[2]), source_xyz=(source_center_point[0], source_center_point[1], source_center_point[2]), real_ng=is_welding, distance_threshold= 4))
         samples.sort(key=lambda r: r.roi_id)
         # self.export_roi_distance_excel(samples, rf"{self.current_model()}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
         self.export_roi_distance_excel(samples, rf"{self.current_model()}_report.xlsx")
@@ -651,18 +680,15 @@ class MainWindow(QMainWindow):
         n_norm = (np.linalg.norm(n) + 1e-12)
         signed = (pts @ n + d) / n_norm
 
-        keep = signed > float(distance_threshold)
-        
+        keep = signed > float(distance_threshold)        
         keep_idx = np.where(keep)[0]
         rem_idx  = np.where(~keep)[0]
 
-        def trim_indices_by_signed(global_idx: np.ndarray, signed_all: np.ndarray, trim_ratio: float) -> np.ndarray:
-            """global_idx에 해당하는 signed 값에서 상/하위 trim_ratio 제거 후 남는 global_idx 반환"""
+        def trim_indices_by_signed(global_idx: np.ndarray, signed_all: np.ndarray, trim_ratio: float) -> np.ndarray:            
             if global_idx.size == 0:
                 return global_idx
 
             s = signed_all[global_idx]  # 해당 그룹의 signed 값들
-
             lo = np.percentile(s, 100.0 * trim_ratio)
             hi = np.percentile(s, 100.0 * (1.0 - trim_ratio))
 
@@ -670,7 +696,6 @@ class MainWindow(QMainWindow):
             return global_idx[keep_local]
 
         trim_ratio = float(trim_ratio)  # 파라미터로 받고 있다고 가정
-
         keep_idx_trim = trim_indices_by_signed(keep_idx, signed, trim_ratio)
         rem_idx_trim  = trim_indices_by_signed(rem_idx,  signed, trim_ratio)
 
@@ -679,12 +704,9 @@ class MainWindow(QMainWindow):
 
         # 1. above filtering
         above = self.remove_nearest_percent_from_above(above, below, 30)
-        above.paint_uniform_color((1, 0, 0))
 
         # 2. above plane fitting
         plane_model2, n2, above_inlier, above_outlier = self.fit_plane_from_pcd(above, ransac_thresh=0.05)
-
-        # 법선 부호 고정 (cam -> object)
         a2, b2, c2, d2 = plane_model2
         n2 = np.array([a2, b2, c2], dtype=np.float64)
 
@@ -694,7 +716,7 @@ class MainWindow(QMainWindow):
             cam_pos_cad = T_cam_to_cad[:3, 3]
 
             center = np.asarray(center, dtype=np.float64).reshape(3)
-            v_ref = center - cam_pos_cad  # cam -> object (필요하면 반대로 바꿔 테스트)
+            v_ref = center - cam_pos_cad 
 
             if np.dot(n2, v_ref) < 0:
                 n2 = -n2
@@ -717,8 +739,12 @@ class MainWindow(QMainWindow):
         welding_pcd = pcd.select_by_index(near_idx.tolist())
         plane_pcd  = pcd.select_by_index(far_idx.tolist())
 
-        # eps = self.auto_eps(welding_pcd, factor=2.5)
-        # welding_pcd = self.keep_largest_spatial_component(welding_pcd, eps, min_points=10) # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! min_points로 클러스터링 최적화 가능
+        if len(welding_pcd.points) == 0:
+            return welding_pcd, plane_pcd, plane_model2, False, None
+
+        if len(welding_pcd.points) >= 10:
+            eps = self.auto_eps(welding_pcd, factor=2.5)
+            welding_pcd = self.keep_largest_spatial_component(welding_pcd, eps, min_points=10)
 
         if len(welding_pcd.points) == 0:
             return welding_pcd, plane_pcd, plane_model2, False, None
@@ -730,37 +756,25 @@ class MainWindow(QMainWindow):
         #     plane_pcd
         # ])
 
-    #     # 4. confirm real welding points 
+        # 4. confirm real welding points 
         n_welding = len(welding_pcd.points)
         n_plane   = len(plane_pcd.points)
 
         if n_welding < count_threshold or n_plane < count_threshold:
             return welding_pcd, plane_pcd, plane_model2, False, None
 
-    #     # plane1 기준 signed를 welding/plane 각각 다시 계산
+        # plane1 기준 signed를 welding/plane 각각 다시 계산
         w_pts = np.asarray(welding_pcd.points, dtype=np.float64)
         p_pts = np.asarray(plane_pcd.points, dtype=np.float64)
 
         s_welding = (w_pts @ n2 + d2) / n2_norm
         s_plane   = (p_pts @ n2 + d2) / n2_norm
-
-        hi_a = np.percentile(s_plane, 100.0 * (1.0 - trim_ratio))
-        s_plane_trim = s_plane[s_plane <= hi_a]
-
-        lo_b = np.percentile(s_welding, 100.0 * trim_ratio)
-        s_welding_trim = s_welding[s_welding >= lo_b]
-
-        plane_min = float(s_plane_trim.min())
-        welding_max = float(s_welding_trim.max())
-        gap = welding_max - plane_min
-
-        print(rf">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> gap = {gap}")
-        is_welding = gap >= float(min_max_threshold)
+        
+        weld_ref  = float(np.percentile(s_welding, 90.0))        
+        is_welding = weld_ref >= float(min_max_threshold)
+        print(rf">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> gap = {weld_ref}")
 
         # 5. center point
-        if w_pts.size == 0:
-            return welding_pcd, plane_pcd, plane_model2, False, None
-
         w_center = w_pts.mean(axis=0)
         w_x, w_y = float(w_center[0]), float(w_center[1])
 
@@ -771,7 +785,7 @@ class MainWindow(QMainWindow):
         w_z = -(a2 * w_x + b2 * w_y + d2) / c2
         w_xyz = np.array([w_x, w_y, w_z], dtype=np.float64)
 
-        return welding_pcd, plane_pcd, plane_model, is_welding, w_center
+        return welding_pcd, plane_pcd, plane_model2, is_welding, w_xyz
     
     def fit_plane_from_pcd(self, pcd: o3d.geometry.PointCloud,
                        ransac_thresh: float = 0.05,
