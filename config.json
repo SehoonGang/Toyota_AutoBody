@@ -26,6 +26,6 @@
         "deep_learning_model": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\260123_inspection_model.pt",
         "bodyPath": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\body.ply",
         "BodyPosition": "Left",
-        "cad_scale" : 1
+        "cad_scale" : 1.0055786
     }
 }

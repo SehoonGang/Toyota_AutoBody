@@ -264,9 +264,42 @@ class MainWindow(QMainWindow):
         #변경 필요 ========================================
         self.seg_model = YOLO(self.tbDeepLearningModelFilePath.text())
 
+    def on_refresh(self):
+        self.scan_count  = 1
+
+    def on_scan(self):
+        self.tbScanCount.setText(str(self.scan_count))
+        path = rf"{self.save_sensor_data_path}/{self.current_model()}/"#/{datetime.now().strftime("%Y%m%d_%H%M%S")}"
+
+        if not os.path.exists(path):            
+            os.makedirs(path)
+            print(f"폴더가 생성되었습니다: {path}")
+        else:
+            print("이미 폴더가 존재합니다.")
+
+        frame = self.camera.scan_frame()
+        texture = frame.get_texture()
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_Texture_8Bit.png", texture)
+
+        point_map = frame.get_point_map()
+        x_point_map = point_map[:, :, 0].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_X.tif", x_point_map)
+        y_point_map = point_map[:, :, 1].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Y.tif", y_point_map)
+        z_point_map = point_map[:, :, 2].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Z.tif", z_point_map)
+
+        normal_map = frame.get_normal_map()
+        x_normal_map = normal_map[:, :, 0].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_X.tif", x_normal_map)
+        y_normal_map = normal_map[:, :, 1].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Y.tif", y_normal_map)
+        z_normal_map = normal_map[:, :, 2].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Z.tif", z_normal_map)
+        self.scan_count += 1
+
     def on_merge(self):
         self.log.append("[INFO] Start to merge frames")
-
 
         # load Cache Start
         cache_file = f"cache/merge_pcd_{self.current_model()}.pkl"
@@ -322,60 +355,24 @@ class MainWindow(QMainWindow):
                                                                             copy_pcd=True)
         
         self.result_pcd = moved_merge_pcd
-        self.result_T = T_to_cad
+        self.result_T = T_to_cad       
 
-        pcd_base = copy.deepcopy(self.result_pcd)
-        cad_points = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)
+        # pcd_base = copy.deepcopy(self.result_pcd)
+        # cad_points = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)
         
-        # # cad point scale 곱하기
-        # cad_points = cad_points * self._cad_scale 
+        # pcd_cad = o3d.geometry.PointCloud()
+        # pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
+        # pcd_cad.paint_uniform_color((1.0, 0.0, 0.0))
 
-        pcd_cad = o3d.geometry.PointCloud()
-        pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
-        pcd_cad.paint_uniform_color((1.0, 0.0, 0.0))
-
-        o3d.visualization.draw_geometries(
-            [pcd_base, pcd_cad],
-            window_name="base + cad_points",
-            point_show_normal=False
-        )
+        # o3d.visualization.draw_geometries(
+        #     [pcd_base, pcd_cad],
+        #     window_name="base + cad_points",
+        #     point_show_normal=False
+        # )
 
         self.set_pointcloud(moved_merge_pcd)
         self.log.append("merge frames complete.")
 
-    def on_refresh(self):
-        self.scan_count  = 1
-
-    def on_scan(self):
-        self.tbScanCount.setText(str(self.scan_count))
-        path = rf"{self.save_sensor_data_path}/{self.current_model()}/"#/{datetime.now().strftime("%Y%m%d_%H%M%S")}"
-
-        if not os.path.exists(path):            
-            os.makedirs(path)
-            print(f"폴더가 생성되었습니다: {path}")
-        else:
-            print("이미 폴더가 존재합니다.")
-
-        frame = self.camera.scan_frame()
-        texture = frame.get_texture()
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_Texture_8Bit.png", texture)
-
-        point_map = frame.get_point_map()
-        x_point_map = point_map[:, :, 0].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_X.tif", x_point_map)
-        y_point_map = point_map[:, :, 1].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Y.tif", y_point_map)
-        z_point_map = point_map[:, :, 2].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Z.tif", z_point_map)
-
-        normal_map = frame.get_normal_map()
-        x_normal_map = normal_map[:, :, 0].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_X.tif", x_normal_map)
-        y_normal_map = normal_map[:, :, 1].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Y.tif", y_normal_map)
-        z_normal_map = normal_map[:, :, 2].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Z.tif", z_normal_map)
-        self.scan_count += 1
 
 
         
@@ -561,21 +558,21 @@ class MainWindow(QMainWindow):
             pose_dict[frame_number] = pose
 
         self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
-        pcd_base = copy.deepcopy(self.result_pcd)        
-        pcd_base = self.result_pcd.voxel_down_sample(0.5)
+        # pcd_base = copy.deepcopy(self.result_pcd)        
+        # pcd_base = self.result_pcd.voxel_down_sample(0.5)
 
-        pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
+        # pcd_holes = self.roi_dict_to_pcd(roi_hole_points_dict=roi_hole_points_dict)
 
-        vis = o3d.visualization.Visualizer()
-        vis.create_window()
-        vis.add_geometry(pcd_base)
-        vis.add_geometry(pcd_holes)        
-        opt = vis.get_render_option()
-        opt.point_size = 4.0
-        vis.run()
-        vis.destroy_window()
+        # vis = o3d.visualization.Visualizer()
+        # vis.create_window()
+        # vis.add_geometry(pcd_base)
+        # vis.add_geometry(pcd_holes)        
+        # opt = vis.get_render_option()
+        # opt.point_size = 4.0
+        # vis.run()
+        # vis.destroy_window()
 
-        self.set_pointcloud(pcd_holes)
+        # self.set_pointcloud(pcd_holes)
 
     def set_pointcloud(self, pcd: o3d.geometry.PointCloud, *, size: float = 15.0, sampling_rate : 0.5):
         pcd = pcd.voxel_down_sample(sampling_rate)
@@ -751,9 +748,9 @@ class MainWindow(QMainWindow):
             print(rf"Welding Point {roi_id} : DIST : {distance}")
             print(rf"{roi_id} >>>>> {is_welding}")
             
-            if roi_id == 49 :
-                pcd_near.paint_uniform_color((1.0, 0.0, 0.0))
-                o3d.visualization.draw_geometries([pcd_far, pcd_near, w_sphere, cad_sphere],window_name=f"ROI {roi_id}")
+            # if roi_id == 49 :
+            #     pcd_near.paint_uniform_color((1.0, 0.0, 0.0))
+            #     o3d.visualization.draw_geometries([pcd_far, pcd_near, w_sphere, cad_sphere],window_name=f"ROI {roi_id}")
 
             samples.append(RoiRow(roi_id=roi_id,
                                   cad_xyz=(cad_center_point[0], cad_center_point[1], cad_center_point[2]),
@@ -819,18 +816,22 @@ class MainWindow(QMainWindow):
         self.export_roi_distance_excel(samples, rf"{self.current_model()}_report.xlsx")        
 
         geoms = [self.result_pcd]
-        merged_far = o3d.geometry.PointCloud()
-        for roi_id, pcd in welding_pcd_dict.items() :
-            merged_far += pcd
-        geoms.append(merged_far)
+        # merged_far = o3d.geometry.PointCloud()
+        # for roi_id, pcd in welding_pcd_dict.items() :
+        #     merged_far += pcd
+        # geoms.append(merged_far)
+        cad_list = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)
+        cad_list = cad_list * self._cad_scale 
+
+        src_list = self.register_with_icp(src_list, cad_list)
 
         for cad in np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32) :
             n_sphere = sphere_at(cad, radius=1, color=(0, 1 ,0))
             geoms.append(n_sphere)
 
-        for cad in np.array(self.utils.cad_data[self.current_model()]["cad_centers"], dtype=np.float32) :
-            n_sphere = sphere_at(cad, radius=1, color=(0, 0 ,1))
-            geoms.append(n_sphere)
+        # for cad in np.array(self.utils.cad_data[self.current_model()]["cad_centers"], dtype=np.float32) :
+        #     n_sphere = sphere_at(cad, radius=1, color=(0, 0 ,1))
+        #     geoms.append(n_sphere)
         
         for src in src_list :
             sphere = sphere_at(src, radius=1, color=(1, 0 ,0))
@@ -844,6 +845,40 @@ class MainWindow(QMainWindow):
         pcd.paint_uniform_color(color)
         return pcd
 
+    def register_with_icp(self, source_list, target_list, threshold=0.05):
+        """
+        ICP 알고리즘을 사용하여 source를 target에 정합합니다.
+        - source_list: 옮길 좌표 리스트 [[x,y,z], ...]
+        - target_list: 기준 좌표 리스트 [[x,y,z], ...]
+        - threshold: 대응점을 찾을 최대 거리 (이 거리 안의 점들만 정합에 사용)
+        """
+        # 1. 리스트를 Open3D의 PointCloud 객체로 변환
+        source_pcd = o3d.geometry.PointCloud()
+        source_pcd.points = o3d.utility.Vector3dVector(np.array(source_list))
+
+        target_pcd = o3d.geometry.PointCloud()
+        target_pcd.points = o3d.utility.Vector3dVector(np.array(target_list))
+
+        # 2. 초기 변환 행렬 (Identity Matrix - 변환 없음 상태로 시작)
+        trans_init = np.identity(4)
+
+        # 3. ICP 정합 실행 (Point-to-Point 방식)
+        print("ICP 정합 중...")
+        reg_p2p = o3d.pipelines.registration.registration_icp(
+            source_pcd, target_pcd, threshold, trans_init,
+            o3d.pipelines.registration.TransformationEstimationPointToPoint()
+        )
+
+        # 4. 결과 행렬 확인 (4x4 Transformation Matrix)
+        print("최종 변환 행렬:\n", reg_p2p.transformation)
+
+        # 5. 변환 행렬을 source에 적용하여 좌표 이동
+        source_pcd.transform(reg_p2p.transformation)
+
+        # 6. 이동된 좌표를 다시 리스트로 변환하여 반환
+        registered_points = np.asarray(source_pcd.points).tolist()
+        
+        return registered_points    
 
     def filter_points_near_plane(self, pcd, distance_threshold=1.0, ransac_thresh=1.0,
                              ransac_n=3, num_iterations=2000,
