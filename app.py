@@ -29,6 +29,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import cv2
 import pickle
+from datetime import datetime
 
 
 import math
@@ -40,10 +41,10 @@ from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence, Union
 import socket
 
+from copick3d_api_python import Camera, DeviceState, logging
 
-FORCE_REFRESH = False  # True로 설정하면 캐시 무시하고 재계산
 
-
+FORCE_REFRESH = True  # True로 설정하면 캐시 무시하고 재계산
 
 @dataclass
 class RoiRow:
@@ -64,10 +65,6 @@ class PointCloudView(QWidget):
         layout.addWidget(self.view)
 
         self.scatter = None
-        self.result_pcd = o3d.geometry.PointCloud()
-        self.result_T = np.eye(4, dtype=np.float64)
-        self.T_list = []
-        self.frame_idx = {}
 
         g = gl.GLGridItem()
         g.scale(200, 200, 1)
@@ -85,6 +82,15 @@ class MainWindow(QMainWindow):
         self.pcd = PCD()
         self._set_path()
 
+        self.result_pcd = o3d.geometry.PointCloud()
+        self.result_T = np.eye(4, dtype=np.float64)
+        self.T_list = []
+        self.frame_idx = {}
+        self.devices = {}
+        self.camera = None
+        self.curr_sensor = str
+        self.save_sensor_data_path = "./scan"
+        self.scan_count = 1
         
         leftWidget = QWidget()
         rightWidget = QWidget()        
@@ -141,11 +147,41 @@ class MainWindow(QMainWindow):
         deepLearningFileRow.addWidget(self.tbDeepLearningModelFilePath)
         self.btnDeepLearningFilePath = QPushButton("Load")
         deepLearningFileRow.addWidget(self.btnDeepLearningFilePath)
-        rightLayout.addLayout(deepLearningFileRow)
+        rightLayout.addLayout(deepLearningFileRow)       
+
+        discoverSensorRow = QHBoxLayout()
+        self.cmbSensors = QComboBox()
+        self.cmbSensors.currentIndexChanged.connect(self.on_select_sensor)
+        self.btnDiscover = QPushButton("Discover Sensors")
+        self.btnDiscover.clicked.connect(self.on_discover_sensors)
+        discoverSensorRow.addWidget(self.cmbSensors)
+        discoverSensorRow.addWidget(self.btnDiscover)
+        rightLayout.addLayout(discoverSensorRow)
+
+        connectRow = QHBoxLayout()
+        self.btnConnect = QPushButton("Connect")
+        self.btnConnect.clicked.connect(self.on_connect_sensor)
+        self.btnDisConnect = QPushButton("Disconnect")
+        self.btnDisConnect.clicked.connect(self.on_disconnect_sensor)
+        connectRow.addWidget(self.btnConnect)
+        connectRow.addWidget(self.btnDisConnect)
+        rightLayout.addLayout(connectRow)
         
+        scanRow = QHBoxLayout()
+        self.btnScan = QPushButton("Scan")
+        self.btnScan.setFixedWidth(380)
+        self.btnScan.clicked.connect(self.on_scan) 
+        self.tbScanCount = QLineEdit()
+        self.tbScanCount.setReadOnly(True)
+        scanRow.addWidget(self.btnScan)
+        scanRow.addWidget(self.tbScanCount)
+        rightLayout.addLayout(scanRow)
+
         self.btnMerge = QPushButton("Merge")
         self.btnInspect = QPushButton("Inspect")
+        self.btnRefresh = QPushButton("Refresh")
         
+        rightLayout.addWidget(self.btnRefresh)        
         rightLayout.addWidget(self.btnMerge)
         rightLayout.addWidget(self.btnInspect)
         rightLayout.addWidget(QLabel("Log"))
@@ -158,7 +194,7 @@ class MainWindow(QMainWindow):
         self.btnDeepLearningFilePath.clicked.connect(self.on_deep_learning_file_load)        
         self.btnMerge.clicked.connect(self.on_merge)
         self.btnInspect.clicked.connect(self.on_inspect)
-
+        self.btnRefresh.clicked.connect(self.on_refresh)
 
     def _set_path(self):
         config = load_cfg()
@@ -181,7 +217,38 @@ class MainWindow(QMainWindow):
             print("set Right Pose default")
             self.radioR.setChecked(True)
         self._cad_scale = float(config["cad_scale"]),   
+    
+    def on_discover_sensors(self):
+        self.devices = {}
         
+        for device in Camera.discover_devices() :
+            serial_number = device.serial_number
+            state = device.query_device_state()
+            self.log.append(rf"{serial_number} / {state}")
+            
+            if state == DeviceState.Ready :
+                self.devices[device.serial_number] = device
+
+            self.cmbSensors.clear()
+            self.cmbSensors.addItems(self.devices.keys())
+            self.curr_sensor = self.devices[list(self.devices.keys())[0]]
+
+    def on_connect_sensor(self) :
+        state = self.curr_sensor.query_device_state()
+        if state == DeviceState.Ready :
+            self.camera = Camera()
+            self.camera.connect(self.curr_sensor)
+            self.log.append(rf"Connect Camera : Serial({self.curr_sensor.serial_number})")
+        self.scan_count  = 1
+    
+    def on_disconnect_sensor(self) : 
+        self.camera.disconnect()
+        self.camera = None
+        self.scan_count  = 1
+
+    def on_select_sensor(self):        
+        self.curr_sensor = self.devices[self.cmbSensors.currentText()]
+        print(">>>>>>>>>>>>>>>> " , self.curr_sensor)
 
     def on_source_data_load(self):        
         self.utils.on_load_source_data_folder(self.tbSourceDataFolderPath.text(), FileType.Image)
@@ -275,6 +342,43 @@ class MainWindow(QMainWindow):
 
         self.set_pointcloud(moved_merge_pcd)
         self.log.append("merge frames complete.")
+
+    def on_refresh(self):
+        self.scan_count  = 1
+
+    def on_scan(self):
+        self.tbScanCount.setText(str(self.scan_count))
+        path = rf"{self.save_sensor_data_path}/{self.current_model()}/"#/{datetime.now().strftime("%Y%m%d_%H%M%S")}"
+
+        if not os.path.exists(path):            
+            os.makedirs(path)
+            print(f"폴더가 생성되었습니다: {path}")
+        else:
+            print("이미 폴더가 존재합니다.")
+
+        frame = self.camera.scan_frame()
+        texture = frame.get_texture()
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_Texture_8Bit.png", texture)
+
+        point_map = frame.get_point_map()
+        x_point_map = point_map[:, :, 0].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_X.tif", x_point_map)
+        y_point_map = point_map[:, :, 1].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Y.tif", y_point_map)
+        z_point_map = point_map[:, :, 2].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Z.tif", z_point_map)
+
+        normal_map = frame.get_normal_map()
+        x_normal_map = normal_map[:, :, 0].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_X.tif", x_normal_map)
+        y_normal_map = normal_map[:, :, 1].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Y.tif", y_normal_map)
+        z_normal_map = normal_map[:, :, 2].astype(np.float32)
+        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Z.tif", z_normal_map)
+        self.scan_count += 1
+
+
+        
 
     def on_inspect(self):
         self.log.append("Inspecting data...")
