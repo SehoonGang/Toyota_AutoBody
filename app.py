@@ -30,7 +30,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import cv2
 import pickle
-from datetime import datetime
 import pyqtgraph as pg
 
 import math
@@ -261,6 +260,7 @@ class MainWindow(QMainWindow):
         
         self.result_pcd = moved_merge_pcd
         self.result_T = T_to_cad
+        self.set_pointcloud(pcd_input= self.result_pcd, size= 0.5, sampling_rate=0.3)
         self.log.append("Merged and moved the merged pcd to cad successfully.")
     
     def on_discover_sensors(self):
@@ -317,50 +317,64 @@ class MainWindow(QMainWindow):
         self.btnScan.setText(rf"SCAN [{self.scan_count}]")
 
     def on_scan(self):
-        self.tbScanCount.setText(str(self.scan_count))        
-        frame = self.camera.scan_frame()
+        is_dummy = True        
 
-        texture = frame.get_texture()
-        point_map = frame.get_point_map()
-        x_point_map = point_map[:, :, 0].astype(np.float32)
-        y_point_map = point_map[:, :, 1].astype(np.float32)
-        z_point_map = point_map[:, :, 2].astype(np.float32)
-        pose_path = Path(rf"{self.pose_base_dir_path}/{self.current_model()}/{self.scan_count}_SCAN_POSE.txt")
+        if is_dummy :               
+            def extract_index(group):
+                fname = os.path.basename(group[0])
+                m = re.match(r"(\d+)_", fname)
+                return int(m.group(1)) if m else -1
 
-        without_z_file_path = rf"{self.without_z_base_dir_path}/{self.current_model()}/{self.scan_count}_IMG_PointCloud_Z.tif"
-        path = rf"{self.save_sensor_data_path}/{self.current_model()}/"#/{datetime.now().strftime("%Y%m%d_%H%M%S")}"
-        mask_save_path = rf"{path}/{self.scan_count}_Mask.tiff"
-        mask_array = self.utils.create_mask_from_depth_array(z_point_map, without_z_file_path, mask_save_path = mask_save_path, tolerance=10, min_area = 10, use_morph=True, save = self.cbSave.isChecked())
+            source_data_folder_files_sort = sorted(self.utils.source_data_folder_files, key=extract_index)         
+            frame = source_data_folder_files_sort[self.scan_count-1]
+            texture_path, x_path, y_path, z_path, pose_path, mask_path = frame
+        
+            texture = np.asarray(cv2.imread(texture_path, cv2.IMREAD_COLOR))            
+            x_point_map = np.asarray(iio.imread(x_path))
+            y_point_map = np.asarray(iio.imread(y_path))
+            z_point_map = np.asarray(iio.imread(z_path))
+            mask_array = np.asarray(iio.imread(mask_path))
 
-        self.pcd.scan_merge_pcd(self.utils.calibration_file_path, "fanuc",  self.current_model(),
-                                frame_number=self.scan_count, texture=texture,
-                                point_x=x_point_map, point_y=y_point_map, point_z=z_point_map,
-                                mask= mask_array, pose_path=pose_path)
-        self.log.append(rf"[Frame {self.scan_count}] Merged pcd for successfully")        
+            self.pcd.scan_merge_pcd(self.utils.calibration_file_path, "fanuc",  self.current_model(),
+                                    frame_number=self.scan_count, texture=texture,
+                                    point_x=x_point_map, point_y=y_point_map, point_z=z_point_map,
+                                    mask= mask_array, pose_path=pose_path)
+            self.log.append(rf"[Frame {self.scan_count}] Merged pcd for successfully")
+        else :
+            frame = self.camera.scan_frame()
 
-        # normal_map = frame.get_normal_map()
-        # x_normal_map = normal_map[:, :, 0].astype(np.float32)
-        # cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_X.tif", x_normal_map)
-        # y_normal_map = normal_map[:, :, 1].astype(np.float32)
-        # cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Y.tif", y_normal_map)
-        # z_normal_map = normal_map[:, :, 2].astype(np.float32)
-        # cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Z.tif", z_normal_map)
-        # self.log.append(rf"Saved {self.scan_count}_NormalMap files files successfully")
+            texture = frame.get_texture()
+            point_map = frame.get_point_map()
+            x_point_map = point_map[:, :, 0].astype(np.float32)
+            y_point_map = point_map[:, :, 1].astype(np.float32)
+            z_point_map = point_map[:, :, 2].astype(np.float32)
+            pose_path = Path(rf"{self.pose_base_dir_path}/{self.current_model()}/{self.scan_count}_SCAN_POSE.txt")
 
-        if self.cbSave.isChecked() :
-            if not os.path.exists(path):
-                os.makedirs(path)
-                print(f"폴더가 생성되었습니다: {path}")
+            without_z_file_path = rf"{self.without_z_base_dir_path}/{self.current_model()}/{self.scan_count}_IMG_PointCloud_Z.tif"
+            path = rf"{self.save_sensor_data_path}/{self.current_model()}/"#/{datetime.now().strftime("%Y%m%d_%H%M%S")}"
+            mask_save_path = rf"{path}/{self.scan_count}_Mask.tiff"
+            mask_array = self.utils.create_mask_from_depth_array(z_point_map, without_z_file_path, mask_save_path = mask_save_path, tolerance=10, min_area = 10, use_morph=True, save = self.cbSave.isChecked())
 
-            cv2.imwrite(rf"{path}/{self.scan_count}_IMG_Texture_8Bit.png", texture)
-            dst_dir = Path(rf"{path}")
-            dst_dir.mkdir(parents=True, exist_ok = True)
-            shutil.copy2(str(pose_path), str(dst_dir/pose_path.name))            
+            self.pcd.scan_merge_pcd(self.utils.calibration_file_path, "fanuc",  self.current_model(),
+                                    frame_number=self.scan_count, texture=texture,
+                                    point_x=x_point_map, point_y=y_point_map, point_z=z_point_map,
+                                    mask= mask_array, pose_path=pose_path)
+            self.log.append(rf"[Frame {self.scan_count}] Merged pcd for successfully")
 
-            cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_X.tif", x_point_map)
-            cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Y.tif", y_point_map)
-            cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Z.tif", z_point_map)
-            self.log.append(rf"[Frame [{self.scan_count}]] Saved scan data successfully")
+            if self.cbSave.isChecked() :
+                if not os.path.exists(path):
+                    os.makedirs(path)
+                    print(f"폴더가 생성되었습니다: {path}")
+
+                cv2.imwrite(rf"{path}/{self.scan_count}_IMG_Texture_8Bit.png", texture)
+                dst_dir = Path(rf"{path}")
+                dst_dir.mkdir(parents=True, exist_ok = True)
+                shutil.copy2(str(pose_path), str(dst_dir/pose_path.name))            
+
+                cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_X.tif", x_point_map)
+                cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Y.tif", y_point_map)
+                cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Z.tif", z_point_map)
+                self.log.append(rf"[Frame [{self.scan_count}]] Saved scan data successfully")
 
         self.scan_count += 1
         self.btnScan.setText(rf"SCAN [{self.scan_count}]")
@@ -429,11 +443,9 @@ class MainWindow(QMainWindow):
         pose_dict = {}
         self.frame_idx = {}
 
-        sorted_scans = sorted(self.pcd.scan_path_dict.items())
-
-        for i, frame in enumerate(tqdm(sorted_scans, total=len(sorted_scans))):
+        for i in range(len(self.pcd.scan_path_dict.items())) :
             pcd = PCD()
-            texture, point_x, point_y, point_z, pose_path, mask_array = frame
+            point_x, point_y, point_z, texture, pose_path, mask_array = self.pcd.scan_path_dict[i+1]
 
             pts_cam = pcd.scan_make_cam_pcd(point_x=point_x, point_y=point_y, point_z=point_z, texture=texture, mask_array=mask_array)
             frame_number = i+1
@@ -517,9 +529,8 @@ class MainWindow(QMainWindow):
                     continue
                 
                 ch, cw, _ = crop_img.shape
-                if ch < 16 or cw < 16:                    
+                if ch < 16 or cw < 16:
                     continue
-
 
                 results = self.seg_model(crop_img, device='cuda:0', verbose=False)
                 # cv2.imwrite(rf"C:\Users\SehoonKang\Desktop\s\RH\crop_{frame_number}_{roi_id}.png", crop_img)
@@ -592,8 +603,17 @@ class MainWindow(QMainWindow):
             pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]
             pose = pose[:6]
             pose_dict[frame_number] = pose
+        
+        welding_center_point_list, welding_pcd_dict = self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
+        welding_points_points = np.array(welding_center_point_list, dtype=np.float32)
+        welding_points_pcd = o3d.geometry.PointCloud()
+        welding_points_pcd.points = o3d.utility.Vector3dVector(welding_points_points.astype(np.float64))
 
-        self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
+        welding_pcd = o3d.geometry.PointCloud()
+        for pcd in welding_pcd_dict.values() :
+            welding_pcd += pcd
+        welding_pcd.paint_uniform_color([0.0, 1.0, 0.0])
+        self.set_inspected_result_pointcloud(pcd_input=[self.result_pcd, welding_pcd], center_input=welding_points_pcd)
 
     def on_inspect(self):
         self.log.append("Inspecting data...")
@@ -903,6 +923,7 @@ class MainWindow(QMainWindow):
         self.view3d.view.opts['center'] = pg.Vector(center[0], center[1], center[2])
         dist = np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))
         self.view3d.view.setCameraPosition(distance=dist * 0.5)
+    
     def roi_dict_to_pcd(self, roi_hole_points_dict: dict[int, dict[int, np.ndarray]]) -> o3d.geometry.PointCloud:
         all_pts = []
         
@@ -1029,13 +1050,13 @@ class MainWindow(QMainWindow):
                 s.paint_uniform_color(color)
                 return s
             
-            w_sphere   = sphere_at(w_xyz, radius=0.5, color=(0.5, 0.5, 0.5))   # 빨강: w_xyz
-            cad_sphere = sphere_at(cad_center_point, radius=0.5, color=(0.0, 0, 1)) 
+            # w_sphere   = sphere_at(w_xyz, radius=0.5, color=(0.5, 0.5, 0.5))   # 빨강: w_xyz
+            # cad_sphere = sphere_at(cad_center_point, radius=0.5, color=(0.0, 0, 1)) 
 
-            print(rf"Welding Point {roi_id} : CAD X : {cad_center_point[0]} / CAD Y : {cad_center_point[1]} / CAD Z : {cad_center_point[2]}")
-            print(rf"Welding Point {roi_id} : SRC X : {source_center_point[0]} / SRC Y : {source_center_point[1]} / SRC Z : {source_center_point[2]}")
-            print(rf"Welding Point {roi_id} : DIST : {distance}")
-            print(rf"{roi_id} >>>>> {is_welding}")
+            # print(rf"Welding Point {roi_id} : CAD X : {cad_center_point[0]} / CAD Y : {cad_center_point[1]} / CAD Z : {cad_center_point[2]}")
+            # print(rf"Welding Point {roi_id} : SRC X : {source_center_point[0]} / SRC Y : {source_center_point[1]} / SRC Z : {source_center_point[2]}")
+            # print(rf"Welding Point {roi_id} : DIST : {distance}")
+            # print(rf"{roi_id} >>>>> {is_welding}")
             
             # if roi_id == 49 :
             #     pcd_near.paint_uniform_color((1.0, 0.0, 0.0))
@@ -1061,71 +1082,10 @@ class MainWindow(QMainWindow):
             cad_list.append(cad_point)
             src_list.append(src_point)
             valid_roi.append(roi_id)
-
-        def estimate_rigid_kabsch(src, dst):
-            src = np.asarray(src, float)
-            dst = np.asarray(dst, float)
-
-            src_mean = src.mean(axis=0)
-            dst_mean = dst.mean(axis=0)
-
-            X = src - src_mean
-            Y = dst - dst_mean
-
-            H = X.T @ Y
-            U, S, Vt = np.linalg.svd(H)
-            R = Vt.T @ U.T
-            if np.linalg.det(R) < 0:
-                Vt[-1, :] *= -1
-                R = Vt.T @ U.T
-
-            t = dst_mean - R @ src_mean
-            return R, t
-        
-        # cad = np.vstack(cad_list)
-        # src = np.vstack(src_list)
-        # R, t = estimate_rigid_kabsch(src, cad)
-        # src_rigid = (R @ src.T).T + t
-
-        # err_before = np.linalg.norm(src - cad, axis=1)
-        # err_after  = np.linalg.norm(src_rigid - cad, axis=1)
-
-        # for i in range(len(src)):
-        #     cx, cy, cz = cad[i]
-        #     sx, sy, sz = src[i]
-        #     px, py, pz = src_rigid[i]
-
-        #     print(f"[{i:02d}] CAD      : {cx:9.3f} {cy:9.3f} {cz:9.3f}")
-        #     print(f"     SRC      : {sx:9.3f} {sy:9.3f} {sz:9.3f}   dist={err_before[i]:.3f}")
-        #     print(f"     SRC_CORR : {px:9.3f} {py:9.3f} {pz:9.3f}   dist={err_after[i]:.3f}")
-        #     print("-"*70)
-
+ 
         samples.sort(key=lambda r: r.roi_id)
-        # self.export_roi_distance_excel(samples, rf"{self.current_model()}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
-        self.export_roi_distance_excel(samples, rf"{self.current_model()}_report.xlsx")        
-
-        geoms = [self.result_pcd]
-        # merged_far = o3d.geometry.PointCloud()
-        # for roi_id, pcd in welding_pcd_dict.items() :
-        #     merged_far += pcd
-        # geoms.append(merged_far)
-        cad_list = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)
-        cad_list = cad_list * self._cad_scale 
-
-        src_list = self.register_with_icp(src_list, cad_list)
-
-        for cad in np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32) :
-            n_sphere = sphere_at(cad, radius=1, color=(0, 1 ,0))
-            geoms.append(n_sphere)
-
-        # for cad in np.array(self.utils.cad_data[self.current_model()]["cad_centers"], dtype=np.float32) :
-        #     n_sphere = sphere_at(cad, radius=1, color=(0, 0 ,1))
-        #     geoms.append(n_sphere)
-        
-        for src in src_list :
-            sphere = sphere_at(src, radius=1, color=(1, 0 ,0))
-            geoms.append(sphere)
-        o3d.visualization.draw_geometries(geoms, window_name="ALL ROIs cached")
+        self.export_roi_distance_excel(samples, rf"{self.current_model()}_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx") 
+        return src_list, welding_pcd_dict
 
     def points_to_pcd(self, points_xyz, color=(1.0, 0.0, 0.0)):
         pts = np.asarray(points_xyz, dtype=np.float64).reshape(-1, 3)

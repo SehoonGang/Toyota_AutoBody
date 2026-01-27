@@ -127,8 +127,8 @@ class PCD:
         T_list = T_acc_list_master + T_acc_list_source
         T_List_v2 = []
 
-        for idx  in range(len(self.scan_pcd_dict.keys())):
-            T_base_cam = self.T_base_cam_dict[str(idx+1)]
+        for idx in range(len(self.scan_pcd_dict.keys())):
+            T_base_cam = self.scan_T_base_cam_dict[idx+1]
             T_acc = T_list[idx]['Transform']
             T_List_v2.append(T_acc @ T_base_cam)
 
@@ -138,7 +138,7 @@ class PCD:
 
         for d in T_acc_sorted:
             n = str(d["number"])            
-            T_cam_to_merged_dict[n] = d["Transform"] @ self.scan_T_base_cam_dict[n]
+            T_cam_to_merged_dict[n] = d["Transform"] @ self.scan_T_base_cam_dict[int(n)]
         circle_points_merged = []
         
         ANGLE_RANGE_BY_NAME = {
@@ -153,7 +153,7 @@ class PCD:
             if not self.scan_detected_circle_centers[frame_number]:
                 continue
 
-            point_x, point_y, point_z, _ = self.scan_path_dict[frame_number]
+            point_x, point_y, point_z, _, _, _ = self.scan_path_dict[frame_number]
             X = point_x
             Y = point_y
             Z = point_z
@@ -180,7 +180,7 @@ class PCD:
 
                 # self.show_ring_points_3d(xyz, p_cam)
 
-                T_cam_to_merged = T_cam_to_merged_dict[frame_number]
+                T_cam_to_merged = T_cam_to_merged_dict[str(frame_number)]
                 p_cam_h = np.array([p_cam[0], p_cam[1], p_cam[2], 1.0], dtype=np.float64)
                 p_merged = (T_cam_to_merged @ p_cam_h)[:3]
                 circle_points_merged.append(p_merged)
@@ -383,7 +383,7 @@ class PCD:
     def _icp_merge(self, pcd_dict : dict[int, object]):
         master_frame_number = [1, 2, 3, 4, 5]
 
-        master_merge_frame_list = [{"number" : str(n), "pcd" : pcd_dict[str(n)]} for n in master_frame_number]
+        master_merge_frame_list = [{"number" : str(n), "pcd" : pcd_dict[n]} for n in master_frame_number]
         source_merge_frame_list = []
 
         for frame_number in sorted(pcd_dict.keys(), key=lambda f : int(f)) :
@@ -684,7 +684,7 @@ class PCD:
             gy = ry + y_off
             
 
-            vis_final = texture.copy()
+            # vis_final = texture.copy()
             # if self._verbose == True:
             #     cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
             #     cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
