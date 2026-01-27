@@ -2,6 +2,7 @@ import datetime
 import json
 import math
 import os
+import shutil
 import sys
 from typing import Optional, Sequence, Union
 from PyQt6.QtCore import Qt
@@ -91,6 +92,8 @@ class MainWindow(QMainWindow):
         self.curr_sensor = str
         self.save_sensor_data_path = "./scan"
         self.scan_count = 1
+
+        self.pose_base_dir_path = "./data/poses"
         
         leftWidget = QWidget()
         rightWidget = QWidget()        
@@ -274,13 +277,20 @@ class MainWindow(QMainWindow):
         if not os.path.exists(path):            
             os.makedirs(path)
             print(f"폴더가 생성되었습니다: {path}")
-        else:
-            print("이미 폴더가 존재합니다.")
 
         frame = self.camera.scan_frame()
         texture = frame.get_texture()
         cv2.imwrite(rf"{path}/{self.scan_count}_IMG_Texture_8Bit.png", texture)
 
+        dst_dir = Path(rf"{path}")
+        dst_dir.mkdir(parents=True, exist_ok = True)
+        src_path = ""
+        if self.current_model() == 'LH' :
+            src_path = Path(rf"{self.pose_base_dir_path}/LH/{self.scan_count}_SCAN_POSE.txt")            
+        else :
+            src_path = Path(rf"{self.pose_base_dir_path}/RH/{self.scan_count}_SCAN_POSE.txt")
+        shutil.copy2(str(src_path), str(dst_dir/src_path.name))
+        
         point_map = frame.get_point_map()
         x_point_map = point_map[:, :, 0].astype(np.float32)
         cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_X.tif", x_point_map)
