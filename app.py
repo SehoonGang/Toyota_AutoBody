@@ -418,7 +418,8 @@ class MainWindow(QMainWindow):
         pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
         pcd_cad.paint_uniform_color((1.0, 0.0, 0.0))
 
-        self.set_pointcloud(pcd_input=[self.result_pcd, pcd_cad], size=0.5, sampling_rate=0.3)
+        # self.set_pointcloud(pcd_input=[self.result_pcd, pcd_cad], size=0.5, sampling_rate=0.3)
+        self.set_inspected_result_pointcloud(pcd_input=self.result_pcd, center_input=pcd_cad, size= 0.5, sampling_rate=0.3)
         self.log.append("merge frames complete.")
         
     def on_scan_inspect(self) :
@@ -801,10 +802,47 @@ class MainWindow(QMainWindow):
             pcd = pcd_input
 
         pcd = pcd.voxel_down_sample(sampling_rate)
-
         cl, ind = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
         pcd = pcd.select_by_index(ind)
+        pts = np.asarray(pcd.points, dtype=np.float32)
 
+        if len(pts) == 0:
+            return
+
+        if pcd.has_colors():
+            cols = np.asarray(pcd.colors, dtype=np.float32)
+            if cols.max() > 1.0:
+                cols = cols / 255.0
+            alpha = np.ones((cols.shape[0], 1), dtype=np.float32) * 0.4
+            cols = np.concatenate([cols, alpha], axis=1)
+        else:
+            cols = np.ones((pts.shape[0], 4), dtype=np.float32) * 0.5
+            cols[:, 3] = 0.4
+
+        if getattr(self.view3d, "scatter", None) is not None:
+            self.view3d.view.removeItem(self.view3d.scatter)
+            self.view3d.scatter = None
+        
+        self.view3d.scatter = gl.GLScatterPlotItem(pos=pts, color=cols, size=float(size), pxMode=False)
+        self.view3d.view.addItem(self.view3d.scatter)
+
+        center = np.mean(pts, axis=0)
+        self.view3d.view.opts['center'] = pg.Vector(center[0], center[1], center[2])
+        dist = np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))
+        self.view3d.view.setCameraPosition(distance=dist * 0.5)
+
+    def set_inspected_result_pointcloud(self, pcd_input, center_input, *, size: float = 0.5, sampling_rate : float = 0.3):
+        if isinstance(pcd_input, list):            
+            combined_pcd = o3d.geometry.PointCloud()
+            for p in pcd_input:
+                combined_pcd += p
+            pcd = combined_pcd
+        else:
+            pcd = pcd_input
+
+        pcd = pcd.voxel_down_sample(sampling_rate)
+        cl, ind = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        pcd = pcd.select_by_index(ind)
         pts = np.asarray(pcd.points, dtype=np.float32)
 
         if len(pts) == 0:
@@ -824,18 +862,47 @@ class MainWindow(QMainWindow):
             self.view3d.view.removeItem(self.view3d.scatter)
             self.view3d.scatter = None
         
-        self.view3d.scatter = gl.GLScatterPlotItem(pos=pts,
-                                                   color=cols,
-                                                   size=float(size),
-                                                   pxMode=False)
+        self.view3d.scatter = gl.GLScatterPlotItem(pos=pts, color=cols, size=float(size), pxMode=False)
         self.view3d.view.addItem(self.view3d.scatter)
+
+        if getattr(self.view3d, "gizmo", None) is not None:
+            self.view3d.view.removeItem(self.view3d.gizmo)
+
+        if center_input is not None:
+            # 1. 기존 Gizmo 그룹 제거
+            if getattr(self.view3d, "gizmo_group", None) is not None:
+                for item in self.view3d.gizmo_group:
+                    self.view3d.view.removeItem(item)
+            self.view3d.gizmo_group = []
+            c_pts = np.asarray(center_input.points)
+            
+            if len(c_pts) > 0:
+                data_range = np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))
+                gizmo_size = data_range * 0.01 # 화살표 크기 조절
+
+                for pt in c_pts:
+                    # 50개 포인트 각각에 대해 X(빨강), Y(초록), Z(파랑) 화살표 생성
+                    # X축 (Red)
+                    x_arrow = CustomGizmo.create_arrow(size=gizmo_size, color=(1, 0, 0, 1), axis='x')
+                    x_arrow.translate(pt[0], pt[1], pt[2])
+                    
+                    # Y축 (Green)
+                    y_arrow = CustomGizmo.create_arrow(size=gizmo_size, color=(0, 1, 0, 1), axis='y')
+                    y_arrow.translate(pt[0], pt[1], pt[2])
+                    
+                    # Z축 (Blue)
+                    z_arrow = CustomGizmo.create_arrow(size=gizmo_size, color=(0, 0, 1, 1), axis='z')
+                    z_arrow.translate(pt[0], pt[1], pt[2])
+
+                    # 화면에 추가 및 리스트 저장
+                    for arrow in [x_arrow, y_arrow, z_arrow]:
+                        self.view3d.view.addItem(arrow)
+                        self.view3d.gizmo_group.append(arrow)
 
         center = np.mean(pts, axis=0)
         self.view3d.view.opts['center'] = pg.Vector(center[0], center[1], center[2])
-
         dist = np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))
         self.view3d.view.setCameraPosition(distance=dist * 0.5)
-
     def roi_dict_to_pcd(self, roi_hole_points_dict: dict[int, dict[int, np.ndarray]]) -> o3d.geometry.PointCloud:
         all_pts = []
         
@@ -1453,6 +1520,33 @@ class MainWindow(QMainWindow):
         wb.save(out_xlsx_path)
         return out_xlsx_path
 
+class CustomGizmo:
+    @staticmethod
+    def create_arrow(size=0.1, color=(1, 0, 0, 1), axis='x'):
+        """선이 굵고 끝에 삼각뿔이 달린 화살표 하나를 생성합니다."""
+        # 1. 막대(Cylinder) 부분 생성 (이 녀석을 부모로 쓸 겁니다)
+        cyl_data = gl.MeshData.cylinder(rows=10, cols=20, radius=[0.05, 0.05], length=1.0)
+        cyl = gl.GLMeshItem(meshdata=cyl_data, smooth=True, color=color, shader='shaded', glOptions='opaque')
+        
+        # 2. 삼각뿔(Cone) 부분 생성
+        cone_data = gl.MeshData.cylinder(rows=10, cols=20, radius=[0.1, 0.0], length=0.3)
+        cone = gl.GLMeshItem(meshdata=cone_data, smooth=True, color=color, shader='shaded', glOptions='opaque')
+        
+        # 삼각뿔을 막대 끝(length=1.0)으로 이동시킨 후 막대의 자식으로 등록
+        cone.translate(0, 0, 1.0)
+        cone.setParentItem(cyl) 
+        
+        # 3. 축에 따른 회전 설정
+        # 기본은 Z축 방향이므로 x, y일 때만 회전시킵니다.
+        if axis == 'x':
+            cyl.rotate(90, 0, 1, 0)
+        elif axis == 'y':
+            cyl.rotate(-90, 1, 0, 0)
+            
+        # 4. 전체 크기 조절
+        cyl.scale(size, size, size)
+        
+        return cyl # 이제 cyl이 화살표 전체를 대표합니다.
 def load_cfg():
 
     config_path = os.path.join(os.path.dirname(__file__), 'config.json')
