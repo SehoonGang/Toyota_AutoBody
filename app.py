@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
         self.scan_count = 1
 
         self.pose_base_dir_path = "./data/poses"
+        self.without_z_base_dir_path = "./data/mask"
         
         leftWidget = QWidget()
         rightWidget = QWidget()        
@@ -283,13 +284,10 @@ class MainWindow(QMainWindow):
         cv2.imwrite(rf"{path}/{self.scan_count}_IMG_Texture_8Bit.png", texture)
 
         dst_dir = Path(rf"{path}")
-        dst_dir.mkdir(parents=True, exist_ok = True)
-        src_path = ""
-        if self.current_model() == 'LH' :
-            src_path = Path(rf"{self.pose_base_dir_path}/LH/{self.scan_count}_SCAN_POSE.txt")            
-        else :
-            src_path = Path(rf"{self.pose_base_dir_path}/RH/{self.scan_count}_SCAN_POSE.txt")
+        dst_dir.mkdir(parents=True, exist_ok = True)        
+        src_path = Path(rf"{self.pose_base_dir_path}/{self.current_model()}/{self.scan_count}_SCAN_POSE.txt")
         shutil.copy2(str(src_path), str(dst_dir/src_path.name))
+        self.log.append(rf"Saved {self.scan_count}_SCAN_POSE.txt successfully")
         
         point_map = frame.get_point_map()
         x_point_map = point_map[:, :, 0].astype(np.float32)
@@ -298,6 +296,11 @@ class MainWindow(QMainWindow):
         cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Y.tif", y_point_map)
         z_point_map = point_map[:, :, 2].astype(np.float32)
         cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Z.tif", z_point_map)
+        self.log.append(rf"Saved {self.scan_count}_PointCloud files successfully")
+
+        without_z_file_path = rf"{self.without_z_base_dir_path}/{self.current_model()}/{self.scan_count}_IMG_PointCloud_Z.tif"
+        self.utils.create_mask_from_depth_array(z_point_map, without_z_file_path, mask_save_path = rf"{path}/{self.scan_count}_Mask.tiff", tolerance=10, min_area = 10, use_morph=True)
+        self.log.append(rf"Saved {self.scan_count}_Mask.tiff successfully")
 
         normal_map = frame.get_normal_map()
         x_normal_map = normal_map[:, :, 0].astype(np.float32)
@@ -306,6 +309,7 @@ class MainWindow(QMainWindow):
         cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Y.tif", y_normal_map)
         z_normal_map = normal_map[:, :, 2].astype(np.float32)
         cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Z.tif", z_normal_map)
+        self.log.append(rf"Saved {self.scan_count}_NormalMap files files successfully")
         self.scan_count += 1
 
     def on_merge(self):
