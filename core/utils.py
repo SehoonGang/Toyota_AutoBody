@@ -94,7 +94,7 @@ class Utils :
         cv2.imwrite(mask_save_path, mask)
         return mask       
     
-    def create_mask_from_depth_array(self, z_with, z_without, mask_save_path, tolerance=1, min_area=200, use_morph=True):
+    def create_mask_from_depth_array(self, z_with, z_without, mask_save_path, tolerance=1, min_area=200, use_morph=True, save = True):
         # 1. 로드 및 타입 변환
         # 만약 z_with가 이미 배열이라면 astype만 수행, z_without이 경로라면 로드
         z_with = z_with.astype(np.float32)
@@ -130,8 +130,9 @@ class Utils :
         # 기존에 정의하신 polish_mask 호출
         mask = self.polish_mask(mask, close_ksize=11, close_iter=2, min_area=min_area)
 
-        # 6. 저장
-        cv2.imwrite(mask_save_path, mask)
+        if save :
+            # 6. 저장
+            cv2.imwrite(mask_save_path, mask)
         
         return mask
     

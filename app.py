@@ -8,7 +8,7 @@ from typing import Optional, Sequence, Union
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (    
     QApplication, QComboBox, QHBoxLayout,
-    QLabel, QMainWindow, QMessageBox,
+    QLabel, QMainWindow, QMessageBox, QCheckBox,
     QPushButton, QRadioButton, QTextEdit,
     QVBoxLayout, QWidget, QButtonGroup,
     QLabel, QLineEdit, QPushButton, QTextEdit, QMessageBox
@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 import cv2
 import pickle
 from datetime import datetime
-
+import pyqtgraph as pg
 
 import math
 import openpyxl
@@ -45,7 +45,7 @@ import socket
 from copick3d_api_python import Camera, DeviceState, logging
 
 
-FORCE_REFRESH = True  # True로 설정하면 캐시 무시하고 재계산
+FORCE_REFRESH = False  # True로 설정하면 캐시 무시하고 재계산
 
 @dataclass
 class RoiRow:
@@ -92,6 +92,7 @@ class MainWindow(QMainWindow):
         self.curr_sensor = str
         self.save_sensor_data_path = "./scan"
         self.scan_count = 1
+        self.isConnected = False
 
         self.pose_base_dir_path = "./data/poses"
         self.without_z_base_dir_path = "./data/mask"
@@ -113,92 +114,118 @@ class MainWindow(QMainWindow):
         rightLayout = QVBoxLayout(rightWidget)
         rightLayout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        rightLayout.addWidget(QLabel("Model"))
+        lblSetting = QLabel("GENERAL")
+        lblSetting.setStyleSheet("font-size: 18px; font-weight: bold;")
+        rightLayout.addWidget(lblSetting)
         self.radioGroup = QButtonGroup(self)
         # self.radioL = QRadioButton("L Model")
         # self.radioR = QRadioButton("R Model")
         # self.radioR.setChecked(True)
+        
+        radioRow = QHBoxLayout()
+        lblRadioButton = QLabel("MODEL")
         self.radioGroup.addButton(self.radioL)
         self.radioGroup.addButton(self.radioR) 
-        radioRow = QHBoxLayout()
+        radioRow.addWidget(lblRadioButton)
+        radioRow.addStretch(1)
         radioRow.addWidget(self.radioL)
         radioRow.addWidget(self.radioR)
-        radioRow.addStretch(1)
         rightLayout.addLayout(radioRow)
-
-        sourceDataFolderRow = QHBoxLayout()
-        sourceDataFolderRow.addWidget(QLabel("Source Data"))
-        # self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\RH")
-        self.tbSourceDataFolderPath = QLineEdit(self._source_dir)
-        sourceDataFolderRow.addWidget(self.tbSourceDataFolderPath)
-        self.btnSourceDataLoad = QPushButton("Load")
-        sourceDataFolderRow.addWidget(self.btnSourceDataLoad)
-        rightLayout.addLayout(sourceDataFolderRow)
         
-        calibrationFileRow = QHBoxLayout()
-        calibrationFileRow.addWidget(QLabel("Calibration File"))
-        # self.tbCalibrationFilePath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\cam_robot_extrinsic_0_1_hand_eye.yml")
-        self.tbCalibrationFilePath = QLineEdit(self._calib_path)
+        calibrationFileRow = QHBoxLayout()        
+        self.tbCalibrationFilePath = QLineEdit(self._calib_path)        
+        self.btnCalibrationFilePath = QPushButton("LOAD")
+
+        calibrationFileRow.addWidget(QLabel("CALIBRATION"))        
         calibrationFileRow.addWidget(self.tbCalibrationFilePath)
-        self.btnCalibrationFilePath = QPushButton("Load")
         calibrationFileRow.addWidget(self.btnCalibrationFilePath)
         rightLayout.addLayout(calibrationFileRow)
 
         deepLearningFileRow = QHBoxLayout()
-        deepLearningFileRow.addWidget(QLabel("Deep Learning"))
+        deepLearningFileRow.addWidget(QLabel("DEEP LEARNING"))
         # self.tbDeepLearningModelFilePath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\260120_seg_v2.pt")        
         self.tbDeepLearningModelFilePath = QLineEdit(self._seg_model_path)   
         deepLearningFileRow.addWidget(self.tbDeepLearningModelFilePath)
-        self.btnDeepLearningFilePath = QPushButton("Load")
+        self.btnDeepLearningFilePath = QPushButton("LOAD")
         deepLearningFileRow.addWidget(self.btnDeepLearningFilePath)
-        rightLayout.addLayout(deepLearningFileRow)       
+        rightLayout.addLayout(deepLearningFileRow)
+
+        lblScan = QLabel("SCAN")
+        lblScan.setStyleSheet("font-size: 18px; font-weight: bold; margin-top: 20px")
+        rightLayout.addWidget(lblScan)
 
         discoverSensorRow = QHBoxLayout()
-        self.cmbSensors = QComboBox()
-        self.cmbSensors.currentIndexChanged.connect(self.on_select_sensor)
-        self.btnDiscover = QPushButton("Discover Sensors")
-        self.btnDiscover.clicked.connect(self.on_discover_sensors)
+        self.cmbSensors = QComboBox()        
+        self.btnDiscover = QPushButton("DISCOVER")
+        self.btnDiscover.setFixedWidth(80)
         discoverSensorRow.addWidget(self.cmbSensors)
         discoverSensorRow.addWidget(self.btnDiscover)
         rightLayout.addLayout(discoverSensorRow)
 
         connectRow = QHBoxLayout()
-        self.btnConnect = QPushButton("Connect")
-        self.btnConnect.clicked.connect(self.on_connect_sensor)
-        self.btnDisConnect = QPushButton("Disconnect")
-        self.btnDisConnect.clicked.connect(self.on_disconnect_sensor)
+        self.btnConnect = QPushButton("CONNECT")
         connectRow.addWidget(self.btnConnect)
-        connectRow.addWidget(self.btnDisConnect)
         rightLayout.addLayout(connectRow)
         
         scanRow = QHBoxLayout()
-        self.btnScan = QPushButton("Scan")
+        self.btnScan = QPushButton("SCAN [1]")
         self.btnScan.setFixedWidth(380)
-        self.btnScan.clicked.connect(self.on_scan) 
-        self.tbScanCount = QLineEdit()
-        self.tbScanCount.setReadOnly(True)
+        self.btnScan.clicked.connect(self.on_scan)
+        self.cbSave = QCheckBox("SAVE")
+        self.cbSave.setChecked(True)       
         scanRow.addWidget(self.btnScan)
-        scanRow.addWidget(self.tbScanCount)
+        scanRow.addWidget(self.cbSave)
         rightLayout.addLayout(scanRow)
+        self.btnIcpMerge = QPushButton("MERGE")
+        self.btnScanInspect = QPushButton("INSPECT")
+        rightLayout.addWidget(self.btnIcpMerge)
+        rightLayout.addWidget(self.btnScanInspect)
+        self.btnRefresh = QPushButton("REFRESH")        
+        rightLayout.addWidget(self.btnRefresh)  
 
-        self.btnMerge = QPushButton("Merge")
-        self.btnInspect = QPushButton("Inspect")
-        self.btnRefresh = QPushButton("Refresh")
+        lblTest = QLabel("TEST")
+        lblTest.setStyleSheet("font-size: 18px; font-weight: bold; margin-top: 20px")
+        rightLayout.addWidget(lblTest)
+
+        sourceDataFolderRow = QHBoxLayout()
+        sourceDataFolderRow.addWidget(QLabel("SOURCE"))
+        # self.tbSourceDataFolderPath = QLineEdit(rf"C:\Users\SehoonKang\Desktop\dataset\260113_Scan\260113_Scan\RH")
+        self.tbSourceDataFolderPath = QLineEdit(self._source_dir)
+        sourceDataFolderRow.addWidget(self.tbSourceDataFolderPath)
+        self.btnSourceDataLoad = QPushButton("LOAD")
+        sourceDataFolderRow.addWidget(self.btnSourceDataLoad)
+        rightLayout.addLayout(sourceDataFolderRow)
         
-        rightLayout.addWidget(self.btnRefresh)        
-        rightLayout.addWidget(self.btnMerge)
-        rightLayout.addWidget(self.btnInspect)
-        rightLayout.addWidget(QLabel("Log"))
+        self.btnMerge = QPushButton("MERGE")
+        self.btnInspect = QPushButton("INSPECT")
+        rightLayout.addWidget(self.btnMerge)        
+        rightLayout.addWidget(self.btnInspect)        
+              
+        lblLog = QLabel("LOG")
+        lblLog.setStyleSheet("font-size: 18px; font-weight: bold; margin-top: 20px")
+        rightLayout.addWidget(lblLog)        
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         rightLayout.addWidget(self.log, 1)
 
+        self.cmbSensors.currentIndexChanged.connect(self.on_select_sensor)
+        self.btnDiscover.clicked.connect(self.on_discover_sensors)
         self.btnSourceDataLoad.clicked.connect(self.on_source_data_load)
         self.btnCalibrationFilePath.clicked.connect(self.on_calibration_file_load)
         self.btnDeepLearningFilePath.clicked.connect(self.on_deep_learning_file_load)        
         self.btnMerge.clicked.connect(self.on_merge)
         self.btnInspect.clicked.connect(self.on_inspect)
         self.btnRefresh.clicked.connect(self.on_refresh)
+        self.btnIcpMerge.clicked.connect(self.on_icp_merge_and_move_to_cad)
+        self.btnScanInspect.clicked.connect(self.on_scan_inspect)
+        self.btnConnect.clicked.connect(self.on_connect_sensor)
+
+        self.utils.on_load_source_data_folder(self.tbCalibrationFilePath.text(), FileType.Calibration)
+        self.log.append(rf"Loaded Calibration file({self.tbCalibrationFilePath.text()}) succesfully.")
+
+        self.utils.on_load_source_data_folder(self.tbDeepLearningModelFilePath.text(), FileType.DeepLearningModel)
+        self.log.append(rf"Loaded Deep Learning Model File({self.tbDeepLearningModelFilePath.text()}) successfully.")        
+        self.seg_model = YOLO(self.tbDeepLearningModelFilePath.text())
 
     def _set_path(self):
         config = load_cfg()
@@ -210,8 +237,8 @@ class MainWindow(QMainWindow):
         self.pcd.set_path(body_path=str(Path(config["bodyPath"])))
         body_pose = str(config["BodyPosition"])
 
-        self.radioL = QRadioButton("L Model")
-        self.radioR = QRadioButton("R Model")
+        self.radioL = QRadioButton("L MODEL")
+        self.radioR = QRadioButton("R MODEL")
         if body_pose == "Left":
             self.radioL.setChecked(True)
         elif body_pose == "Right":
@@ -221,6 +248,20 @@ class MainWindow(QMainWindow):
             print("set Right Pose default")
             self.radioR.setChecked(True)
         self._cad_scale = float(config["cad_scale"]),   
+    
+    def on_icp_merge_and_move_to_cad(self):
+        T_list, merged_pcd, reference_pcd = self.pcd.scan_icp_merge_pcd()
+
+        self.T_list = T_list
+        cad_centers_array = np.array(self.utils.cad_data[self.current_model()]["cad_centers"], dtype=np.float32)
+        moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
+                                                                            CAD_CENTERS=cad_centers_array,
+                                                                            align_points=np.asarray(reference_pcd, dtype=np.float64),
+                                                                            copy_pcd=True)
+        
+        self.result_pcd = moved_merge_pcd
+        self.result_T = T_to_cad
+        self.log.append("Merged and moved the merged pcd to cad successfully.")
     
     def on_discover_sensors(self):
         self.devices = {}
@@ -238,18 +279,21 @@ class MainWindow(QMainWindow):
             self.curr_sensor = self.devices[list(self.devices.keys())[0]]
 
     def on_connect_sensor(self) :
-        state = self.curr_sensor.query_device_state()
-        if state == DeviceState.Ready :
-            self.camera = Camera()
-            self.camera.connect(self.curr_sensor)
-            self.log.append(rf"Connect Camera : Serial({self.curr_sensor.serial_number})")
+        if self.isConnected :
+            self.camera.disconnect()
+            self.camera = None
+            self.isConnected = False
+            self.btnConnect.setText(rf"CONNECT")
+        else :
+            if self.curr_sensor.query_device_state() == DeviceState.Ready :
+                self.camera = Camera()
+                self.camera.connect(self.curr_sensor)
+                self.log.append(rf"Connect Camera : Serial({self.curr_sensor.serial_number})")
+                self.isConnected = True
+                self.btnConnect.setText(rf"DISCONNECT")
         self.scan_count  = 1
+        self.btnScan.setText(rf"SCAN [{self.scan_count}]")
     
-    def on_disconnect_sensor(self) : 
-        self.camera.disconnect()
-        self.camera = None
-        self.scan_count  = 1
-
     def on_select_sensor(self):        
         self.curr_sensor = self.devices[self.cmbSensors.currentText()]
         print(">>>>>>>>>>>>>>>> " , self.curr_sensor)
@@ -270,47 +314,56 @@ class MainWindow(QMainWindow):
 
     def on_refresh(self):
         self.scan_count  = 1
+        self.btnScan.setText(rf"SCAN [{self.scan_count}]")
 
     def on_scan(self):
-        self.tbScanCount.setText(str(self.scan_count))
-        path = rf"{self.save_sensor_data_path}/{self.current_model()}/"#/{datetime.now().strftime("%Y%m%d_%H%M%S")}"
-
-        if not os.path.exists(path):            
-            os.makedirs(path)
-            print(f"폴더가 생성되었습니다: {path}")
-
+        self.tbScanCount.setText(str(self.scan_count))        
         frame = self.camera.scan_frame()
-        texture = frame.get_texture()
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_Texture_8Bit.png", texture)
 
-        dst_dir = Path(rf"{path}")
-        dst_dir.mkdir(parents=True, exist_ok = True)        
-        src_path = Path(rf"{self.pose_base_dir_path}/{self.current_model()}/{self.scan_count}_SCAN_POSE.txt")
-        shutil.copy2(str(src_path), str(dst_dir/src_path.name))
-        self.log.append(rf"Saved {self.scan_count}_SCAN_POSE.txt successfully")
-        
+        texture = frame.get_texture()
         point_map = frame.get_point_map()
         x_point_map = point_map[:, :, 0].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_X.tif", x_point_map)
         y_point_map = point_map[:, :, 1].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Y.tif", y_point_map)
         z_point_map = point_map[:, :, 2].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Z.tif", z_point_map)
-        self.log.append(rf"Saved {self.scan_count}_PointCloud files successfully")
+        pose_path = Path(rf"{self.pose_base_dir_path}/{self.current_model()}/{self.scan_count}_SCAN_POSE.txt")
 
         without_z_file_path = rf"{self.without_z_base_dir_path}/{self.current_model()}/{self.scan_count}_IMG_PointCloud_Z.tif"
-        self.utils.create_mask_from_depth_array(z_point_map, without_z_file_path, mask_save_path = rf"{path}/{self.scan_count}_Mask.tiff", tolerance=10, min_area = 10, use_morph=True)
-        self.log.append(rf"Saved {self.scan_count}_Mask.tiff successfully")
+        path = rf"{self.save_sensor_data_path}/{self.current_model()}/"#/{datetime.now().strftime("%Y%m%d_%H%M%S")}"
+        mask_save_path = rf"{path}/{self.scan_count}_Mask.tiff"
+        mask_array = self.utils.create_mask_from_depth_array(z_point_map, without_z_file_path, mask_save_path = mask_save_path, tolerance=10, min_area = 10, use_morph=True, save = self.cbSave.isChecked())
 
-        normal_map = frame.get_normal_map()
-        x_normal_map = normal_map[:, :, 0].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_X.tif", x_normal_map)
-        y_normal_map = normal_map[:, :, 1].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Y.tif", y_normal_map)
-        z_normal_map = normal_map[:, :, 2].astype(np.float32)
-        cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Z.tif", z_normal_map)
-        self.log.append(rf"Saved {self.scan_count}_NormalMap files files successfully")
+        self.pcd.scan_merge_pcd(self.utils.calibration_file_path, "fanuc",  self.current_model(),
+                                frame_number=self.scan_count, texture=texture,
+                                point_x=x_point_map, point_y=y_point_map, point_z=z_point_map,
+                                mask= mask_array, pose_path=pose_path)
+        self.log.append(rf"[Frame {self.scan_count}] Merged pcd for successfully")        
+
+        # normal_map = frame.get_normal_map()
+        # x_normal_map = normal_map[:, :, 0].astype(np.float32)
+        # cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_X.tif", x_normal_map)
+        # y_normal_map = normal_map[:, :, 1].astype(np.float32)
+        # cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Y.tif", y_normal_map)
+        # z_normal_map = normal_map[:, :, 2].astype(np.float32)
+        # cv2.imwrite(rf"{path}/{self.scan_count}_IMG_NormalMap_Z.tif", z_normal_map)
+        # self.log.append(rf"Saved {self.scan_count}_NormalMap files files successfully")
+
+        if self.cbSave.isChecked() :
+            if not os.path.exists(path):
+                os.makedirs(path)
+                print(f"폴더가 생성되었습니다: {path}")
+
+            cv2.imwrite(rf"{path}/{self.scan_count}_IMG_Texture_8Bit.png", texture)
+            dst_dir = Path(rf"{path}")
+            dst_dir.mkdir(parents=True, exist_ok = True)
+            shutil.copy2(str(pose_path), str(dst_dir/pose_path.name))            
+
+            cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_X.tif", x_point_map)
+            cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Y.tif", y_point_map)
+            cv2.imwrite(rf"{path}/{self.scan_count}_IMG_PointCloud_Z.tif", z_point_map)
+            self.log.append(rf"[Frame [{self.scan_count}]] Saved scan data successfully")
+
         self.scan_count += 1
+        self.btnScan.setText(rf"SCAN [{self.scan_count}]")
 
     def on_merge(self):
         self.log.append("[INFO] Start to merge frames")
@@ -322,7 +375,6 @@ class MainWindow(QMainWindow):
         os.makedirs(cache_dir, exist_ok=True)
         cache_file = f"{cache_dir}/merge_pcd_{self.current_model()}.pkl"
         merged_pcd_file = f"{cache_dir}/merged_pcd_{self.current_model()}.ply"
-
         
         if not FORCE_REFRESH and os.path.exists(cache_file):
             print("Loading from cache...")
@@ -347,49 +399,200 @@ class MainWindow(QMainWindow):
                 pickle.dump({
                     'T_list': T_list,
                     'reference_pcd': reference_pcd
-                }, f)
-                
-        #load Cache End
-
-            # T_list, merged_pcd, reference_pcd = self.pcd.merge_pcd(self.utils.source_data_folder_files,
-            #                                                     self.utils.calibration_file_path,
-            #                                                     "fanuc", self.current_model())
-        
-
-        # Test Cached_data
-
-
+                }, f)                
 
         self.T_list = T_list
         cad_centers_array = np.array(self.utils.cad_data[self.current_model()]["cad_centers"], dtype=np.float32)
-
         moved_merge_pcd, T_to_cad, report = self.pcd.move_merged_pcd_to_cad(merged_pcd=merged_pcd,
                                                                             CAD_CENTERS=cad_centers_array,
                                                                             align_points=np.asarray(reference_pcd, dtype=np.float64),
                                                                             copy_pcd=True)
         
         self.result_pcd = moved_merge_pcd
-        self.result_T = T_to_cad       
+        self.result_T = T_to_cad
 
         # pcd_base = copy.deepcopy(self.result_pcd)
-        # cad_points = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)
+        cad_points = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)
         
-        # pcd_cad = o3d.geometry.PointCloud()
-        # pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
-        # pcd_cad.paint_uniform_color((1.0, 0.0, 0.0))
+        pcd_cad = o3d.geometry.PointCloud()
+        pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
+        pcd_cad.paint_uniform_color((1.0, 0.0, 0.0))
 
-        # o3d.visualization.draw_geometries(
-        #     [pcd_base, pcd_cad],
-        #     window_name="base + cad_points",
-        #     point_show_normal=False
-        # )
-
-        self.set_pointcloud(moved_merge_pcd)
+        self.set_pointcloud(pcd_input=[self.result_pcd, pcd_cad], size=0.5, sampling_rate=0.3)
         self.log.append("merge frames complete.")
-
-
-
         
+    def on_scan_inspect(self) :
+        self.log.append("Inspecting data...")
+        roi_hole_points_dict = {}
+        frame_pcd = {}
+        pose_dict = {}
+        self.frame_idx = {}
+
+        sorted_scans = sorted(self.pcd.scan_path_dict.items())
+
+        for i, frame in enumerate(tqdm(sorted_scans, total=len(sorted_scans))):
+            pcd = PCD()
+            texture, point_x, point_y, point_z, pose_path, mask_array = frame
+
+            pts_cam = pcd.scan_make_cam_pcd(point_x=point_x, point_y=point_y, point_z=point_z, texture=texture, mask_array=mask_array)
+            frame_number = i+1
+            X = point_x
+            Y = point_y
+            Z = point_z
+
+            mask_valid = np.isfinite(X) & np.isfinite(Y) & np.isfinite(Z)
+            mask_valid = np.asarray(mask_valid, dtype=bool)
+            mask_nonzero = (X != 0) | (Y != 0) | (Z != 0)
+            mask_nonzero = np.asarray(mask_nonzero, dtype=bool)
+            mask_valid &= mask_nonzero
+
+            ys_idx, xs_idx = np.where(mask_valid)
+            pts_cam = np.stack([
+                X[ys_idx, xs_idx],
+                Y[ys_idx, xs_idx],
+                Z[ys_idx, xs_idx]
+            ], axis=1)
+
+            image_bgr = texture            
+            bgr = image_bgr[ys_idx, xs_idx]
+            rgb = bgr[:, ::-1].astype(np.float64) / 255.0 
+            
+            T_cam_to_world = self.T_list[i]
+            T_world_to_cad = self.result_T
+            T_cam_to_cad = T_world_to_cad @ T_cam_to_world
+            self.frame_idx[frame_number] = i
+
+            pts_cam = self.transform_points(pts_cam, T_cam_to_world)   
+            pts_cam = self.transform_points(pts_cam, T_world_to_cad)
+
+            frame_pcd[frame_number] = {
+                "points" : pts_cam,
+                "rgb" : rgb,
+                "ys_idx" : ys_idx,
+                "xs_idx" : xs_idx
+            }
+
+            image_for_seg = texture
+            img_h, img_w, _ = image_for_seg.shape
+
+            cad_points  = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)            
+            pcd_cad = o3d.geometry.PointCloud()
+            pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
+            
+            
+            pp = np.asarray(pts_cam, dtype=np.float64).reshape(-1, 3)
+            pcd_pts_cad = o3d.geometry.PointCloud()
+            pcd_pts_cad.points = o3d.utility.Vector3dVector(pp)
+
+            seg_pad = 40
+
+            for roi_id, center in enumerate(cad_points, start=1):
+                dist = np.linalg.norm(pts_cam - center, axis=1)                
+                mask_roi_3d = dist <= 4
+                num_roi_pts = np.count_nonzero(mask_roi_3d)
+
+                if num_roi_pts == 0:
+                    continue
+
+                roi_y = ys_idx[mask_roi_3d]
+                roi_x = xs_idx[mask_roi_3d]
+
+                y_min, y_max = int(roi_y.min()), int(roi_y.max())
+                x_min, x_max = int(roi_x.min()), int(roi_x.max())
+
+                pad = seg_pad
+                y_min = max(y_min - pad, 0)
+                x_min = max(x_min - pad, 0)
+                y_max = min(y_max + pad, img_h - 1)
+                x_max = min(x_max + pad, img_w - 1)
+
+                if y_max <= y_min or x_max <= x_min:
+                    print(rf"{frame_number} // {roi_id} : ymx_{y_max} / ymn_{y_min} / xmx_{x_max} / xmn_{x_min}")
+                    continue
+
+                crop_img = image_for_seg[y_min:y_max + 1, x_min:x_max + 1]
+
+                if crop_img.size == 0:                    
+                    continue
+                
+                ch, cw, _ = crop_img.shape
+                if ch < 16 or cw < 16:                    
+                    continue
+
+
+                results = self.seg_model(crop_img, device='cuda:0', verbose=False)
+                # cv2.imwrite(rf"C:\Users\SehoonKang\Desktop\s\RH\crop_{frame_number}_{roi_id}.png", crop_img)
+                # for i, result in enumerate(results):
+                #     res_img = result.plot()
+                #     cv2.imwrite(rf"C:\Users\SehoonKang\Desktop\s\RH\seg_{frame_number}_{roi_id}.png", res_img)
+
+                if len(results) == 0 or results[0].masks is None:
+                    continue
+
+                masks_yolo = results[0].masks.data.cpu().numpy()
+                if masks_yolo.shape[0] == 0:
+                    print(f"[INFO] ROI : mask 개수 0 (view {i}).")
+                    continue
+
+                mask_bin = (masks_yolo > 0.5)
+                full_mask_local = np.any(mask_bin, axis=0)
+                Hm, Wm = full_mask_local.shape
+
+                if (Hm, Wm) != (ch, cw):
+                    full_mask_local = cv2.resize(full_mask_local.astype(np.uint8), (cw, ch), interpolation=cv2.INTER_NEAREST).astype(bool)                 
+                
+                mask_resized = full_mask_local
+                in_crop_2d = (
+                    (ys_idx >= y_min) & (ys_idx <= y_max) &
+                    (xs_idx >= x_min) & (xs_idx <= x_max)
+                )
+
+                if not np.any(in_crop_2d):
+                    continue
+
+                ys_c = ys_idx[in_crop_2d] - y_min
+                xs_c = xs_idx[in_crop_2d] - x_min
+                mask_on_pixels_small = mask_resized[ys_c, xs_c]
+
+
+                pcd_pts_np = np.asarray(pcd_pts_cad.points, dtype=np.float64)  # (N,3)
+
+                # (B) seg mask로 1차 3D 포인트 추출 (여기서 중심을 구함)
+                seg_pts = pcd_pts_np[in_crop_2d][mask_on_pixels_small]
+                if seg_pts.shape[0] < 10:
+                    # seg는 있는데 3D로 매핑되는 점이 너무 적으면 fallback
+                    continue
+
+                center3d = seg_pts.mean(axis=0)
+
+                # (C) 중심 기준 3D in_crop 정의 (반경 r3d는 튜닝)
+                r3d = 40.0  # mm 기준 (너 데이터에 맞게 20~80 사이로 시작)
+                dist3d = np.linalg.norm(pcd_pts_np - center3d[None, :], axis=1)
+                in_crop3d = dist3d <= r3d
+
+                # (D) 최종 포인트: seg 마스크 & 3D 중심 ROI
+                #     여기서도 2D seg mask가 필요하니까, 2D seg 조건을 전체 프레임으로 확장해야 함
+                #     가장 쉬운 방법: in_crop2d에서 seg mask True였던 인덱스들을 "전역 인덱스"로 복원
+                global_idx_in_crop2d = np.where(in_crop_2d)[0]
+                global_idx_seg = global_idx_in_crop2d[np.where(mask_on_pixels_small)[0]]
+
+                # seg에 해당하는 전역 bool 마스크 생성 (N,)
+                seg_mask_global = np.zeros(pcd_pts_np.shape[0], dtype=bool)
+                seg_mask_global[global_idx_seg] = True
+
+                # 최종
+                final_mask = seg_mask_global & in_crop3d  # (N,)
+                roi_hole_pts = pcd_pts_np[final_mask]
+                n_hole = roi_hole_pts.shape[0]
+                
+                if n_hole > 0:
+                    roi_hole_points_dict.setdefault(roi_id, {})[frame_number] = roi_hole_pts
+
+            pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]
+            pose = pose[:6]
+            pose_dict[frame_number] = pose
+
+        self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
 
     def on_inspect(self):
         self.log.append("Inspecting data...")
@@ -588,28 +791,50 @@ class MainWindow(QMainWindow):
 
         # self.set_pointcloud(pcd_holes)
 
-    def set_pointcloud(self, pcd: o3d.geometry.PointCloud, *, size: float = 15.0, sampling_rate : 0.5):
+    def set_pointcloud(self, pcd_input, *, size: float = 5.0, sampling_rate : float = 0.5):
+        if isinstance(pcd_input, list):            
+            combined_pcd = o3d.geometry.PointCloud()
+            for p in pcd_input:
+                combined_pcd += p
+            pcd = combined_pcd
+        else:
+            pcd = pcd_input
+
         pcd = pcd.voxel_down_sample(sampling_rate)
+
+        cl, ind = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        pcd = pcd.select_by_index(ind)
+
         pts = np.asarray(pcd.points, dtype=np.float32)
+
+        if len(pts) == 0:
+            return
 
         if pcd.has_colors():
             cols = np.asarray(pcd.colors, dtype=np.float32)
             if cols.max() > 1.0:
                 cols = cols / 255.0
-            alpha = np.ones((cols.shape[0], 1), dtype=np.float32)
+            alpha = np.ones((cols.shape[0], 1), dtype=np.float32) * 0.4
             cols = np.concatenate([cols, alpha], axis=1)
         else:
-            cols = np.ones((pts.shape[0], 4), dtype=np.float32) * 0.8
+            cols = np.ones((pts.shape[0], 4), dtype=np.float32) * 0.5
             cols[:, 3] = 1.0
 
-        # ✅ 기존 scatter 제거 (중복 렌더 방지)
         if getattr(self.view3d, "scatter", None) is not None:
             self.view3d.view.removeItem(self.view3d.scatter)
             self.view3d.scatter = None
-
-        # ✅ 점 크기 키우기
-        self.view3d.scatter = gl.GLScatterPlotItem(pos=pts, color=cols, size=float(size), pxMode=True)
+        
+        self.view3d.scatter = gl.GLScatterPlotItem(pos=pts,
+                                                   color=cols,
+                                                   size=float(size),
+                                                   pxMode=False)
         self.view3d.view.addItem(self.view3d.scatter)
+
+        center = np.mean(pts, axis=0)
+        self.view3d.view.opts['center'] = pg.Vector(center[0], center[1], center[2])
+
+        dist = np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))
+        self.view3d.view.setCameraPosition(distance=dist * 0.5)
 
     def roi_dict_to_pcd(self, roi_hole_points_dict: dict[int, dict[int, np.ndarray]]) -> o3d.geometry.PointCloud:
         all_pts = []
@@ -639,23 +864,6 @@ class MainWindow(QMainWindow):
 
     def current_model(self):        
         return 'LH' if self.radioL.isChecked() else 'RH'
-    
-    def set_pointcloud(self, pcd: o3d.geometry.PointCloud):
-            pts = np.asarray(pcd.points, dtype=np.float32)
-            if pcd.has_colors():
-                cols = np.asarray(pcd.colors, dtype=np.float32)
-
-                if cols.max() > 1.0:
-                    cols = cols / 255.0
-
-                alpha = np.ones((cols.shape[0], 1), dtype=np.float32)
-                cols = np.concatenate([cols, alpha], axis=1)
-            else:                
-                cols = np.ones((pts.shape[0], 4), dtype=np.float32) * 0.8
-                cols[:, 3] = 1.0
-
-            self.view3d.scatter = gl.GLScatterPlotItem(pos=pts, color=cols, size=2.0, pxMode=True)
-            self.view3d.view.addItem(self.view3d.scatter)
 
     def transform_points(self, points_xyz: np.ndarray, T: np.ndarray) -> np.ndarray:
         points_xyz = np.asarray(points_xyz, dtype=np.float64)
@@ -1262,8 +1470,6 @@ def load_cfg():
     
     print(f"Loading config for: {hostname}")
     return config
-
-
 
 def main():
     

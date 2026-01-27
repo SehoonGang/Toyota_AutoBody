@@ -17,10 +17,182 @@ class PCD:
     def __init__(self):
         self._verbose = True
         self._verbose_transform = True
+
+        self.scan_path_dict = {}
+        self.scan_pcd_dict = {}
+        self.scan_T_base_cam_dict = {}
+        self.scan_detected_circle_centers = {}
+
         return
     
     def set_path(self, body_path):
         self._body_path = body_path
+
+    def scan_merge_pcd(self, calibration_file : str, robotType : str, current_model : str, frame_number : int,  texture : np.ndarray, point_x : np.ndarray, point_y : np.ndarray, point_z :np.ndarray, pose_path : str, mask : np.ndarray) :
+        self.scan_path_dict[frame_number] = (point_x, point_y, point_z, texture, pose_path, mask)
+
+        detect_circle_setting = dict(topk_hough=5, roi_scale=2.2, roi_half_min=60, roi_half_max=260, band_px=4.0, arc_min=0.15, dp=1.2, minDist=140, param1=120, param2=24, minRadius=50, maxRadius=60)        
+        self.scan_detected_circle_centers.setdefault(frame_number, [])
+        
+        if current_model == 'LH' :
+            if frame_number == 1 :
+                detect_circle_setting['minRadius'] = 10
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting,x= 1527, y= 1169, r = 100)
+                if circles2d:
+                    self.scan_detected_circle_centers[frame_number].append(circles2d[0])
+
+                detect_circle_setting = dict(
+                        topk_hough=5,
+                        roi_scale=2.6,          # 2.2 -> 2.6 (바깥 그림자까지 ROI에 더 여유)
+                        roi_half_min=80,        # 60 -> 80 (너무 타이트하면 바깥원 잘림)
+                        roi_half_max=300,       # 260 -> 300
+                        band_px=6.0,            # 4.0 -> 6.0 (검증 밴드 넓혀서 바깥 에지 포함)
+                        arc_min=0.10,           # 0.15 -> 0.10 (그림자 때문에 원호가 덜 잡혀도 통과)
+                        dp=1.2,
+                        minDist=120,            # 140 -> 120 (큰 의미 없지만 ROI내 1개면 낮춰도 됨)
+                        param1=70,              # 120 -> 90 (에지 더 뽑히게)
+                        param2=16,              # 24 -> 16 (누적 임계 낮춰 바깥 원 같은 약한 원도 후보로)
+                        minRadius=20,           # ✅ 핵심: inner edge 배제
+                        maxRadius=60          # ✅ 핵심: 바깥 원 범위로 제한
+                    )
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting,x= 452, y= 1202, r = 100)
+                if circles2d:
+                    self.scan_detected_circle_centers[frame_number].append(circles2d[0])
+
+            elif frame_number == 3:
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x= 2110, y=1010, r=100)
+                if circles2d:
+                    self.scan_detected_circle_centers[frame_number].append(circles2d[0])
+            elif frame_number == 5:                
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=1166, y=844, r= 100)
+                if circles2d:
+                    self.scan_detected_circle_centers[frame_number].append(circles2d[0])
+                detect_circle_setting['minRadius'] = 20
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=2072, y=634, r= 100)
+                if circles2d:
+                    self.scan_detected_circle_centers[frame_number].append(circles2d[0])
+        else :
+            if frame_number == 1:
+                detect_circle_setting = dict(
+                        topk_hough=5,
+                        roi_scale=2.6,          # 2.2 -> 2.6 (바깥 그림자까지 ROI에 더 여유)
+                        roi_half_min=80,        # 60 -> 80 (너무 타이트하면 바깥원 잘림)
+                        roi_half_max=300,       # 260 -> 300
+                        band_px=6.0,            # 4.0 -> 6.0 (검증 밴드 넓혀서 바깥 에지 포함)
+                        arc_min=0.10,           # 0.15 -> 0.10 (그림자 때문에 원호가 덜 잡혀도 통과)
+                        dp=1.2,
+                        minDist=120,            # 140 -> 120 (큰 의미 없지만 ROI내 1개면 낮춰도 됨)
+                        param1=60,              # 120 -> 90 (에지 더 뽑히게)
+                        param2=16,              # 24 -> 16 (누적 임계 낮춰 바깥 원 같은 약한 원도 후보로)
+                        minRadius=20,           # ✅ 핵심: inner edge 배제
+                        maxRadius=60          # ✅ 핵심: 바깥 원 범위로 제한
+                    )
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=432, y = 1102, r = 100)
+                if circles2d:
+                    self.scan_detected_circle_centers[frame_number].append(circles2d[0])
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=642, y = 701, r = 100)
+                if circles2d:
+                    self.scan_detected_circle_centers[frame_number].append(circles2d[0])
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=806, y = 911, r = 100)
+                if circles2d:
+                    self.scan_detected_circle_centers[frame_number].append(circles2d[0])                    
+            elif frame_number == 3:
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=2106, y = 673, r = 100)
+                if circles2d:
+                    self.scan_detected_circle_centers[frame_number].append(circles2d[0])
+            elif frame_number == 5:
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x = 1172, y = 802, r=100)
+                if circles2d:
+                    self.scan_detected_circle_centers[frame_number].append(circles2d[0])
+
+        pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]            
+        pose = pose[:6]
+        pcd_cam = self.scan_make_cam_pcd(point_x=point_x, point_y=point_y, point_z=point_z, texture=texture, mask_array=mask)
+
+        robotType = robotType.lower()
+        if robotType == "fanuc" :
+            T_base_tcp = self._transform_fanuc_coords_to_T(*pose)
+
+        T_tcp_cam = self._transform_calibration_file_to_T_4x4(calibration_file)
+        T_base_cam = T_base_tcp @ T_tcp_cam
+
+        pcd_base = copy.deepcopy(pcd_cam)
+        pcd_base.transform(T_base_cam)
+        self.scan_pcd_dict[frame_number] = pcd_base
+        self.scan_T_base_cam_dict[frame_number] = T_base_cam
+
+    def scan_icp_merge_pcd(self) :        
+        merged_pcd, T_acc_list_master, T_acc_list_source = self._icp_merge(pcd_dict=self.scan_pcd_dict)                
+        
+        T_list = T_acc_list_master + T_acc_list_source
+        T_List_v2 = []
+
+        for idx  in range(len(self.scan_pcd_dict.keys())):
+            T_base_cam = self.T_base_cam_dict[str(idx+1)]
+            T_acc = T_list[idx]['Transform']
+            T_List_v2.append(T_acc @ T_base_cam)
+
+        T_acc = T_acc_list_master + T_acc_list_source
+        T_acc_sorted = sorted(T_acc, key=lambda d: int(d["number"]))
+        T_cam_to_merged_dict = {}
+
+        for d in T_acc_sorted:
+            n = str(d["number"])            
+            T_cam_to_merged_dict[n] = d["Transform"] @ self.scan_T_base_cam_dict[n]
+        circle_points_merged = []
+        
+        ANGLE_RANGE_BY_NAME = {
+            "1": [(0, 360)],
+            "2": [(0, 360)],
+            "3": [(0, 360)], 
+            "4": [(0, 360)],
+            "5": [(0, 360)],
+        }
+        
+        for frame_number in self.scan_detected_circle_centers:
+            if not self.scan_detected_circle_centers[frame_number]:
+                continue
+
+            point_x, point_y, point_z, _ = self.scan_path_dict[frame_number]
+            X = point_x
+            Y = point_y
+            Z = point_z
+
+            for i  in range(len(self.scan_detected_circle_centers[frame_number])) :
+                gx, gy, rr, score, arc = self.scan_detected_circle_centers[frame_number][i]
+
+                p_cam, xyz = self.estimate_center_xyz_from_circle_ring_by_name(
+                    X, Y, Z,
+                    circle_cx=gx, circle_cy=gy, circle_r=rr,
+                    name=frame_number,
+                    angle_range_by_name=ANGLE_RANGE_BY_NAME,
+                    n_samples=80,
+                    win=10,
+                    min_valid=15,
+                    agg="median",
+                    jitter_px=0.5
+                )
+
+
+                if p_cam is None:
+                    print(f"[CIRCLE] invalid XYZ at ({gx},{gy}) in {frame_number}")
+                    continue
+
+                # self.show_ring_points_3d(xyz, p_cam)
+
+                T_cam_to_merged = T_cam_to_merged_dict[frame_number]
+                p_cam_h = np.array([p_cam[0], p_cam[1], p_cam[2], 1.0], dtype=np.float64)
+                p_merged = (T_cam_to_merged @ p_cam_h)[:3]
+                circle_points_merged.append(p_merged)
+
+        T_list = [
+            v for _, v in sorted(
+                T_cam_to_merged_dict.items(),
+                key=lambda kv: int(kv[0])
+            )
+        ]
+        
+        return T_List_v2, merged_pcd, circle_points_merged
 
 
     def merge_pcd(self, source_list : str, calibration_file : str, robotType : str, current_model : str) :
@@ -41,7 +213,7 @@ class PCD:
             
             detected_circle_centers.setdefault(frame_number, [])
             
-            if current_model == 'LH' :                
+            if current_model == 'LH' :
                 if frame_number == '1' :
                     detect_circle_setting['minRadius'] = 10
                     circles2d = self.find_circle_center(texture_image=texture_path, detect_circle_setting=detect_circle_setting,x= 1527, y= 1169, r = 100)
@@ -365,6 +537,49 @@ class PCD:
             T[:3, :3] = Rm
             T[:3, 3] = [x, y, z]
             return T
+    
+    def scan_make_cam_pcd(self, point_x, point_y, point_z, texture, mask_array, mask_zero_pad_px = 50):
+        Z_MIN = 100.0
+        Z_MAX = 3000.0
+        XY_ABS_MAX = 6000.0    
+
+        X = point_x
+        Y = point_y
+        Z = point_z
+        RGB = texture[..., :3].astype(np.float32) / 255.0
+
+        if mask_array is not None and isinstance(mask_array, np.ndarray):
+            M = mask_array            
+            if M.ndim == 3:
+                M = M[..., 0]            
+            
+            mask = (M > 0)
+        else:
+            mask = np.ones_like(X, dtype=bool)
+
+        if mask_zero_pad_px > 0:
+            r = int(mask_zero_pad_px)
+            k = 2 * r + 1
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+            mask_u8 = mask.astype(np.uint8)
+            mask_u8 = cv2.erode(mask_u8, kernel, iterations=1)
+            mask = mask_u8.astype(bool)
+
+        pts = np.stack([X, Y, Z], axis=-1)
+        valid = np.isfinite(pts).all(axis=2) & (np.linalg.norm(pts, axis=2) > 0) & mask
+
+        pts = pts[valid]
+        cols = RGB[valid]
+
+        x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+        range_mask = ((z > Z_MIN) & (z < Z_MAX) & (np.abs(x) < XY_ABS_MAX) & (np.abs(y) < XY_ABS_MAX))
+        pts = pts[range_mask]
+        cols = cols[range_mask]
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts.astype(np.float64))
+        pcd.colors = o3d.utility.Vector3dVector(cols.astype(np.float64))
+        return pcd
 
     def _make_cam_pcd(self, x_path, y_path, z_path, texture_path, mask_path, mask_zero_pad_px = 50):
         Z_MIN = 100.0
@@ -420,6 +635,67 @@ class PCD:
         y2 = min(cy + r_px + 1, h)
         roi = img[y1:y2, x1:x2].copy()
         return roi, x1, y1
+    
+    def scan_find_circle_center(self, texture, detect_circle_setting, x, y, r) :         
+        circles = self._get_circle_candidates(texture, seed_x=x, seed_y=y, crop_r_px=r,
+                                                  dp=detect_circle_setting['dp'],
+                                                  minDist=detect_circle_setting["minDist"],
+                                                  param1=detect_circle_setting["param1"], 
+                                                  param2=detect_circle_setting["param2"], 
+                                                  minRadius=detect_circle_setting["minRadius"], 
+                                                  maxRadius=detect_circle_setting["maxRadius"],
+        )
+
+        if circles is None or len(circles) == 0:
+            return []
+        
+        center_candidates = self._get_center_points(circles=circles, topk=detect_circle_setting["topk_hough"])
+        if len(center_candidates) == 0:
+            return []
+
+        results: List[CircleResult] = []        
+
+        for (cx, cy, r) in center_candidates:
+            half = int(round(r * detect_circle_setting["roi_scale"]))
+            half = max(detect_circle_setting["roi_half_min"], min(half, detect_circle_setting["roi_half_max"]))            
+            roi, x_off, y_off = self.crop_roi(texture, cx, cy, half)
+            if roi.size == 0:
+                continue
+
+            _, edge_img = self.draw_roi_contours(roi)
+
+            cx_local = cx - x_off
+            cy_local = cy - y_off
+
+            best = self.pick_circle_by_annulus_fit(
+                edge_img,
+                seed_cx=cx_local,
+                seed_cy=cy_local,
+                seed_r=r,
+                band_px=detect_circle_setting["band_px"],
+                arc_min=detect_circle_setting["arc_min"]
+            )
+
+            if best is None:
+                continue
+
+            rx, ry, rr, score, arc_cov = best
+            gx = rx + x_off
+            gy = ry + y_off
+            
+
+            vis_final = texture.copy()
+            # if self._verbose == True:
+            #     cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
+            #     cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
+            #     cv2.imshow("final(best overall)", vis_final)
+            #     cv2.waitKey(0)
+            #     cv2.destroyAllWindows()
+
+            results.append((gx, gy, rr, score, arc_cov))
+
+        results.sort(key=lambda t: t[3], reverse=True)  # score desc
+        return results
     
     def find_circle_center(self, texture_image, detect_circle_setting, x, y, r) :        
         img = cv2.imread(texture_image, cv2.IMREAD_COLOR)
