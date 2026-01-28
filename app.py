@@ -1,6 +1,7 @@
 import datetime
 import json
 import math
+import time
 import os
 import shutil
 import sys
@@ -266,6 +267,15 @@ class MainWindow(QMainWindow):
                                                                             align_points=np.asarray(reference_pcd, dtype=np.float64),
                                                                             copy_pcd=True)
         
+        # ply_path = r"C:\Users\SehoonKang\Desktop\cad.ply"
+
+        # ok = o3d.io.write_point_cloud(
+        #     ply_path,
+        #     moved_merge_pcd,
+        #     write_ascii=False,   # False = binary (권장)
+        #     compressed=False
+        # )
+        
         self.result_pcd = moved_merge_pcd
         self.result_T = T_to_cad
         self.set_pointcloud(pcd_input= self.result_pcd, size= 0.5, sampling_rate=0.3)
@@ -347,7 +357,7 @@ class MainWindow(QMainWindow):
                                     frame_number=self.scan_count, texture=texture,
                                     point_x=x_point_map, point_y=y_point_map, point_z=z_point_map,
                                     mask= mask_array, pose_path=pose_path)
-            self.log.append(rf"[Frame {self.scan_count}] Merged pcd for successfully")
+            self.log.append(rf"[Frame {self.scan_count}] Scan frame for successfully")
         else :
             frame = self.camera.scan_frame()
 
@@ -450,8 +460,8 @@ class MainWindow(QMainWindow):
         frame_pcd = {}
         pose_dict = {}
         self.frame_idx = {}
-
-        for i in range(len(self.pcd.scan_path_dict.items())) :
+        
+        for i in range(len(self.pcd.scan_path_dict.items())) :            
             pcd = PCD()
             point_x, point_y, point_z, texture, pose_path, mask_array = self.pcd.scan_path_dict[i+1]
 
@@ -496,7 +506,8 @@ class MainWindow(QMainWindow):
             image_for_seg = texture
             img_h, img_w, _ = image_for_seg.shape
 
-            cad_points  = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)            
+            cad_points  = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)
+
             pcd_cad = o3d.geometry.PointCloud()
             pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
             
@@ -507,7 +518,7 @@ class MainWindow(QMainWindow):
 
             seg_pad = 40
 
-            for roi_id, center in enumerate(cad_points, start=1):
+            for roi_id, center in enumerate(cad_points, start=1):                
                 dist = np.linalg.norm(pts_cam - center, axis=1)                
                 mask_roi_3d = dist <= 4
                 num_roi_pts = np.count_nonzero(mask_roi_3d)
@@ -540,7 +551,11 @@ class MainWindow(QMainWindow):
                 if ch < 16 or cw < 16:
                     continue
 
+                tic = time.time()
                 results = self.seg_model(crop_img, device='cuda:0', verbose=False)
+                toc = time.time()
+
+                print(f"\n\n\nInstance Seg Model Inference Time :{toc - tic}\n\n\n\n")    
                 # cv2.imwrite(rf"C:\Users\SehoonKang\Desktop\s\RH\crop_{frame_number}_{roi_id}.png", crop_img)
                 # for i, result in enumerate(results):
                 #     res_img = result.plot()
@@ -842,8 +857,9 @@ class MainWindow(QMainWindow):
             pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]
             pose = pose[:6]
             pose_dict[frame_number] = pose
-
+        print("\n\n\n\n1111111111111111111111111111111")
         self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
+        print("\n\n\n\n2222222222222222222222222222222")
 
     def set_pointcloud(self, pcd_input, *, size: float = 5.0, sampling_rate : float = 0.5):
         if isinstance(pcd_input, list):            
