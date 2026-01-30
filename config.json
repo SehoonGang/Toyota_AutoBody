@@ -27,5 +27,14 @@
         "bodyPath": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\body.ply",
         "BodyPosition": "Right",
         "cad_scale" : 1
+    },
+    "shkang_gram" :
+    {
+        "source_data_folder": "C:\\Users\\gsh72\\data\\RH\\RH",
+        "calibration_file": "C:\\Users\\gsh72\\OneDrive\\Dokumen\\GitHub\\Toyota_AutoBody\\data\\cam_robot_extrinsic_0_1_hand_eye.yml",
+        "deep_learning_model": "C:\\Users\\gsh72\\OneDrive\\Dokumen\\GitHub\\Toyota_AutoBody\\data\\260123_inspection_model.pt",
+        "bodyPath": "C:\\Users\\gsh72\\data\\body.ply",
+        "BodyPosition": "Right",
+        "cad_scale" : 1
     }
 }

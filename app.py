@@ -107,18 +107,6 @@ class MainWindow(QMainWindow):
         self.view3d = PointCloudView()
         leftLayout.addWidget(self.view3d, 9)
 
-        self.welding_table = QTableWidget()
-        self.welding_table.setFixedWidth(100)
-        self.welding_table.setColumnCount(2)
-        self.welding_table.setHorizontalHeaderLabels(["ID", "DISTANCE"])
-        self.welding_table.verticalHeader().setVisible(False)
-        self.welding_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.welding_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.welding_table.setAlternatingRowColors(True)
-        self.welding_table.setColumnWidth(0, 18)
-        self.welding_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        leftLayout.addWidget(self.welding_table, 1)
-
         rightLayout = QVBoxLayout(rightWidget)
         rightLayout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
@@ -267,7 +255,7 @@ class MainWindow(QMainWindow):
                                                                             align_points=np.asarray(reference_pcd, dtype=np.float64),
                                                                             copy_pcd=True)
         
-        # ply_path = r"C:\Users\SehoonKang\Desktop\cad.ply"
+        # ply_path = r"C:\Users\SehoonKang\Desktop\merged.ply"
 
         # ok = o3d.io.write_point_cloud(
         #     ply_path,
@@ -426,7 +414,7 @@ class MainWindow(QMainWindow):
             
             # 캐시 저장
             print("Saving to cache...")
-            o3d.io.write_point_cloud(merged_pcd_file, merged_pcd)
+            o3d.io.write_point_cloud(rf"C:\Users\gsh72\data\cle_merge.ply", merged_pcd)
             with open(cache_file, 'wb') as f:
                 pickle.dump({
                     'T_list': T_list,
@@ -552,7 +540,7 @@ class MainWindow(QMainWindow):
                     continue
 
                 tic = time.time()
-                results = self.seg_model(crop_img, device='cuda:0', verbose=False)
+                results = self.seg_model(crop_img, device='cpu', verbose=False)
                 toc = time.time()
 
                 print(f"\n\n\nInstance Seg Model Inference Time :{toc - tic}\n\n\n\n")    
@@ -627,56 +615,10 @@ class MainWindow(QMainWindow):
             pose = pose[:6]
             pose_dict[frame_number] = pose
 
-        welding_center_point_list, welding_pcd_dict, plane_pcd_dict, welding_center_point_dict, gap_dict = self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
+        welding_center_point_list, welding_pcd_dict, plane_pcd_dict, welding_center_point_dict = self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
         welding_points_points = np.array(welding_center_point_list, dtype=np.float32)
         welding_points_pcd = o3d.geometry.PointCloud()
         welding_points_pcd.points = o3d.utility.Vector3dVector(welding_points_points.astype(np.float64))
-
-        welding_pcd = o3d.geometry.PointCloud()
-        for pcd in welding_pcd_dict.values() :
-            welding_pcd += pcd
-        welding_pcd.paint_uniform_color([0.0, 1.0, 0.0])
-        self.set_inspected_result_pointcloud(pcd_input=[self.result_pcd, welding_pcd], center_input=welding_points_pcd)
-
-        cad_points = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)     
-        for i in range(len(cad_points)) :
-            self.add_welding_data(str(i+1), 1, False)
-
-    def add_welding_data(self, roi_id: str, distance: float, is_welding: bool):        
-        distance_threshold = 3.0
-        row_position = self.welding_table.rowCount()
-        self.welding_table.insertRow(row_position)
-        
-        id_item = QTableWidgetItem(str(roi_id))
-        dist_item = QTableWidgetItem(f"{distance:.1f}")        
-        
-        if distance < distance_threshold and is_welding:
-            # 합격 (초록색)
-            green_color = QColor(200, 255, 200) # 연한 초록 배경
-            id_item.setBackground(green_color)
-            dist_item.setBackground(green_color)
-        else:
-            # 불합격 (빨간색 + Bold)
-            red_color = QColor(255, 200, 200) # 연한 빨강 배경
-            bold_font = QFont()
-            bold_font.setBold(True)
-            
-            id_item.setBackground(red_color)
-            dist_item.setBackground(red_color)
-            
-            id_item.setFont(bold_font)
-            dist_item.setFont(bold_font)
-            
-            # 글자색도 빨간색으로 하고 싶다면 아래 주석 해제
-            # id_item.setForeground(QColor(255, 0, 0))
-            # dist_item.setForeground(QColor(255, 0, 0))
-
-        # 4. 테이블에 아이템 배치
-        self.welding_table.setItem(row_position, 0, id_item)
-        self.welding_table.setItem(row_position, 1, dist_item)
-        
-        # 5. 자동으로 가장 최신 행으로 스크롤 (옵션)
-        self.welding_table.scrollToBottom()        
             
     def on_inspect(self):
         self.log.append("Inspecting data...")
@@ -857,9 +799,7 @@ class MainWindow(QMainWindow):
             pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]
             pose = pose[:6]
             pose_dict[frame_number] = pose
-        print("\n\n\n\n1111111111111111111111111111111")
-        self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
-        print("\n\n\n\n2222222222222222222222222222222")
+        self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)        
 
     def set_pointcloud(self, pcd_input, *, size: float = 5.0, sampling_rate : float = 0.5):
         if isinstance(pcd_input, list):            
@@ -1020,7 +960,6 @@ class MainWindow(QMainWindow):
         src_points = {}
         welding_pcd_dict = {}
         plane_pcd_dict = {}
-        gap_dict = {}
 
         for roi_id, pcd_dict in roi_hole_points_dict.items():
             print(rf"{roi_id}번째 타흔 확인")
@@ -1084,7 +1023,6 @@ class MainWindow(QMainWindow):
                                                                      min_max_threshold = 0.1)
             welding_pcd_dict[roi_id] = pcd_far
             plane_pcd_dict[roi_id] = pcd_near
-            gap_dict[roi_id] = gap
             
             if w_xyz is None or np.asarray(w_xyz).size != 3:
                 print(f"[ROI {roi_id}] w_xyz invalid: {w_xyz} (is_welding={is_welding})")
@@ -1137,7 +1075,9 @@ class MainWindow(QMainWindow):
  
         samples.sort(key=lambda r: r.roi_id)
         self.export_roi_distance_excel(samples, rf"{self.current_model()}_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx") 
-        return src_list, welding_pcd_dict, plane_pcd_dict, src_points, gap_dict
+
+        
+        return src_list, welding_pcd_dict, plane_pcd_dict, src_points
 
     def points_to_pcd(self, points_xyz, color=(1.0, 0.0, 0.0)):
         pts = np.asarray(points_xyz, dtype=np.float64).reshape(-1, 3)

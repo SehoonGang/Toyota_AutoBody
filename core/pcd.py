@@ -122,7 +122,7 @@ class PCD:
         self.scan_T_base_cam_dict[frame_number] = T_base_cam
 
     def scan_icp_merge_pcd(self) :        
-        merged_pcd, T_acc_list_master, T_acc_list_source = self._icp_merge(pcd_dict=self.scan_pcd_dict)                
+        merged_pcd, T_acc_list_master, T_acc_list_source = self.scan_icp_merge(pcd_dict=self.scan_pcd_dict)                
         
         T_list = T_acc_list_master + T_acc_list_source
         T_List_v2 = []
@@ -380,10 +380,25 @@ class PCD:
         
         return T_List_v2, merged_pcd, circle_points_merged
 
-    def _icp_merge(self, pcd_dict : dict[int, object]):
+    def scan_icp_merge(self, pcd_dict : dict[int, object]):
         master_frame_number = [1, 2, 3, 4, 5]
 
         master_merge_frame_list = [{"number" : str(n), "pcd" : pcd_dict[n]} for n in master_frame_number]
+        source_merge_frame_list = []
+
+        for frame_number in sorted(pcd_dict.keys(), key=lambda f : int(f)) :
+            if int(frame_number) in master_frame_number:
+                continue
+            source_merge_frame_list.append({"number" : frame_number, "pcd" : pcd_dict[frame_number]})
+        merged_master_frames, T_acc_master_list = self._icp_merge_master_frames(master_frames=master_merge_frame_list)
+        merged_all, T_acc_source_list = self._icp_merge_source_frames(merged_master=merged_master_frames, source_frames=source_merge_frame_list)
+        print("align finish")
+        return merged_all, T_acc_master_list, T_acc_source_list
+
+    def _icp_merge(self, pcd_dict : dict[int, object]):
+        master_frame_number = [1, 2, 3, 4, 5]
+
+        master_merge_frame_list = [{"number" : str(n), "pcd" : pcd_dict[str(n)]} for n in master_frame_number]
         source_merge_frame_list = []
 
         for frame_number in sorted(pcd_dict.keys(), key=lambda f : int(f)) :
@@ -684,13 +699,13 @@ class PCD:
             gy = ry + y_off
             
 
-            # vis_final = texture.copy()
-            # if self._verbose == True:
-            #     cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
-            #     cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
-            #     cv2.imshow("final(best overall)", vis_final)
-            #     cv2.waitKey(0)
-            #     cv2.destroyAllWindows()
+            vis_final = texture.copy()
+            if self._verbose == True:
+                cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
+                cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
+                cv2.imshow("final(best overall)", vis_final)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
 
             results.append((gx, gy, rr, score, arc_cov))
 
@@ -750,12 +765,12 @@ class PCD:
             gy = ry + y_off
             
 
-            # if self._verbose == True:
-            #     cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
-            #     cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
-            #     cv2.imshow("final(best overall)", vis_final)
-            #     cv2.waitKey(0)
-            #     cv2.destroyAllWindows()
+            if self._verbose == True:
+                cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
+                cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
+                cv2.imshow("final(best overall)", vis_final)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
 
             results.append((gx, gy, rr, score, arc_cov))
 
