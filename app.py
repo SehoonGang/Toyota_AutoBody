@@ -1193,24 +1193,9 @@ class MainWindow(QMainWindow):
             source_center_point = np.asarray(w_xyz, dtype=np.float64).reshape(3)
             src_points[roi_id] = source_center_point
 
-            def sphere_at(p, radius=2.0, color=(1.0, 0.0, 0.0)):
-                p = np.asarray(p, dtype=np.float64).reshape(3)
-                s = o3d.geometry.TriangleMesh.create_sphere(radius=float(radius))
-                s.translate(p)
-                s.paint_uniform_color(color)
-                return s
-            
-            # w_sphere   = sphere_at(w_xyz, radius=0.5, color=(0.5, 0.5, 0.5))   # 빨강: w_xyz
-            # cad_sphere = sphere_at(cad_center_point, radius=0.5, color=(0.0, 0, 1)) 
-
-            # print(rf"Welding Point {roi_id} : CAD X : {cad_center_point[0]} / CAD Y : {cad_center_point[1]} / CAD Z : {cad_center_point[2]}")
-            # print(rf"Welding Point {roi_id} : SRC X : {source_center_point[0]} / SRC Y : {source_center_point[1]} / SRC Z : {source_center_point[2]}")
-            # print(rf"Welding Point {roi_id} : DIST : {distance}")
-            # print(rf"{roi_id} >>>>> {is_welding}")
-            
-            # if roi_id == 49 :
-            #     pcd_near.paint_uniform_color((1.0, 0.0, 0.0))
-            #     o3d.visualization.draw_geometries([pcd_far, pcd_near, w_sphere, cad_sphere],window_name=f"ROI {roi_id}")
+            dist = self.distance_3d(cad_center_point, source_center_point)
+            is_welding = is_welding and (dist <= 2)
+            print(rf"[{roi_id}] distance : {dist}")
 
             samples.append(RoiRow(roi_id=roi_id,
                                   cad_xyz=(cad_center_point[0], cad_center_point[1], cad_center_point[2]),
@@ -1218,9 +1203,7 @@ class MainWindow(QMainWindow):
                                   real_ng=is_welding,   
                                   distance_threshold= 4))
             
-        cad_list = []
         src_list = []
-        valid_roi = []
 
         for roi_id in range(1, 51):
             if roi_id not in src_points:
@@ -1229,14 +1212,10 @@ class MainWindow(QMainWindow):
             cad_point = np.asarray(np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)[roi_id-1], dtype=np.float64).reshape(3,)
             src_point = np.asarray(src_points[roi_id], dtype=np.float64).reshape(3,)
 
-            cad_list.append(cad_point)
             src_list.append(src_point)
-            valid_roi.append(roi_id)
  
         samples.sort(key=lambda r: r.roi_id)
-        self.export_roi_distance_excel(samples, rf"{self.current_model()}_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx") 
-
-        
+        self.export_roi_distance_excel(samples, rf"{self.current_model()}_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")         
         return samples
 
     def points_to_pcd(self, points_xyz, color=(1.0, 0.0, 0.0)):
@@ -1425,7 +1404,7 @@ class MainWindow(QMainWindow):
         # if abs(c2) < 1e-12:
         #     return welding_pcd, plane_pcd, plane_model2, is_welding, None
 
-        # w_z = -(a2 * w_x + b2 * w_y + d2) / c2
+        # w_z = -(a2 * w_x + b2 * w_y + d2) / c2        
         w_xyz = np.array([w_x, w_y, w_z], dtype=np.float64)
 
         return welding_pcd, plane_pcd, plane_model2, is_welding, w_xyz, weld_ref
