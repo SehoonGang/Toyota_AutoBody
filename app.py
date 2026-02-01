@@ -7,7 +7,7 @@ import shutil
 import sys
 from typing import Optional, Sequence, Union
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QApplication, QComboBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QCheckBox, QPushButton, QRadioButton, QTextEdit,QHeaderView, QVBoxLayout, QWidget, QButtonGroup, QLabel, QLineEdit, QPushButton, QTextEdit, QTableWidget, QTableWidgetItem)
+from PyQt6.QtWidgets import (QApplication, QComboBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QCheckBox, QPushButton, QRadioButton, QTextEdit,QHeaderView, QVBoxLayout, QWidget, QButtonGroup, QLabel, QLineEdit, QPushButton, QTextEdit, QTableWidget, QTableWidgetItem, QFileDialog)
 from PyQt6.QtGui import QColor, QFont
 
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
@@ -165,16 +165,23 @@ class MainWindow(QMainWindow):
         
         scanRow = QHBoxLayout()
         self.btnScan = QPushButton("SCAN [1]")
-        self.btnScan.setFixedWidth(380)
         self.btnScan.clicked.connect(self.on_scan)
         self.cbSave = QCheckBox("SAVE")
+        self.cbSave.setFixedWidth(80)
         self.cbSave.setChecked(True)       
         scanRow.addWidget(self.btnScan)
         scanRow.addWidget(self.cbSave)
         rightLayout.addLayout(scanRow)
+
+        mergeRow = QHBoxLayout()
+        self.btnSavePly = QPushButton("SAVE")
+        self.btnSavePly.setFixedWidth(80)
         self.btnIcpMerge = QPushButton("MERGE")
+        mergeRow.addWidget(self.btnIcpMerge)
+        mergeRow.addWidget(self.btnSavePly)
+        rightLayout.addLayout(mergeRow)
+
         self.btnScanInspect = QPushButton("INSPECT")
-        rightLayout.addWidget(self.btnIcpMerge)
         rightLayout.addWidget(self.btnScanInspect)
         self.btnRefresh = QPushButton("REFRESH")        
         rightLayout.addWidget(self.btnRefresh)  
@@ -215,6 +222,7 @@ class MainWindow(QMainWindow):
         self.btnIcpMerge.clicked.connect(self.on_icp_merge_and_move_to_cad)
         self.btnScanInspect.clicked.connect(self.on_scan_inspect)
         self.btnConnect.clicked.connect(self.on_connect_sensor)
+        self.btnSavePly.clicked.connect(self.on_save_ply)
 
         self.utils.on_load_source_data_folder(self.tbCalibrationFilePath.text(), FileType.Calibration)
         self.log.append(rf"Loaded Calibration file({self.tbCalibrationFilePath.text()}) succesfully.")
@@ -245,6 +253,63 @@ class MainWindow(QMainWindow):
             self.radioR.setChecked(True)
         self._cad_scale = float(config["cad_scale"]),   
     
+    def on_save_ply(self) :
+        # 1. 저장 다이얼로그 띄우기 (필터에 ply와 txt 지정)
+        file_filter = "PLY Files (*.ply);;Text Files (*.txt)"
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self, 
+            "Save Point Cloud", 
+            "", 
+            file_filter
+        )
+
+        # 사용자가 취소를 눌렀을 경우
+        if not file_path:
+            return
+
+        try:
+            # 2. 저장할 데이터 준비 (현재 프로그램의 데이터 참조)
+            # 예: self.result_pcd가 Open3D 객체라면 numpy로 변환
+            points = np.asarray(self.result_pcd.points)
+            colors = np.asarray(self.result_pcd.colors) if self.result_pcd.has_colors() else None
+
+            # 3. 확장자에 맞게 저장 실행
+            self.save_pcd_to_file(file_path, points, colors)
+            
+            QMessageBox.information(self, "Success", f"Saved successfully to:\n{file_path}")
+            self.log.append(f"Exported PCD: {file_path}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save file:\n{str(e)}")
+
+    def save_pcd_to_file(self, file_path, points, colors=None):
+        """
+        file_path: 저장 경로 (확장자 포함)
+        points: (N, 3) NumPy 배열
+        colors: (N, 3) NumPy 배열 (0~1 사이 값)
+        """
+        ext = os.path.splitext(file_path)[1].lower()
+
+        if ext == ".ply":
+            # Open3D를 이용한 바이너리 PLY 저장 (효율적)
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(points)
+            if colors is not None:
+                pcd.colors = o3d.utility.Vector3dVector(colors)
+            o3d.io.write_point_cloud(file_path, pcd, write_ascii=False)
+            
+        elif ext == ".txt":
+            # NumPy를 이용한 텍스트 저장 (x y z r g b 구조)
+            if colors is not None:
+                # 좌표와 색상을 가로로 합침 (N, 6)
+                data = np.hstack([points, colors])
+                fmt = "%.4f %.4f %.4f %.4f %.4f %.4f"
+            else:
+                data = points
+                fmt = "%.4f %.4f %.4f"
+            
+            np.savetxt(file_path, data, fmt=fmt)
+
     def on_icp_merge_and_move_to_cad(self):
         T_list, merged_pcd, reference_pcd = self.pcd.scan_icp_merge_pcd()
 
@@ -255,15 +320,6 @@ class MainWindow(QMainWindow):
                                                                             align_points=np.asarray(reference_pcd, dtype=np.float64),
                                                                             copy_pcd=True)
         
-        # ply_path = r"C:\Users\SehoonKang\Desktop\merged.ply"
-
-        # ok = o3d.io.write_point_cloud(
-        #     ply_path,
-        #     moved_merge_pcd,
-        #     write_ascii=False,   # False = binary (권장)
-        #     compressed=False
-        # )
-        
         self.result_pcd = moved_merge_pcd
         self.result_T = T_to_cad
         t3 = time.perf_counter()
@@ -271,6 +327,7 @@ class MainWindow(QMainWindow):
         t4 = time.perf_counter()
         print(rf"{t4 - t3} merged rendering time.")
         self.log.append("Mergedt and moved the merged pcd to cad successfully.")
+        
     
     def on_discover_sensors(self):
         self.devices = {}
