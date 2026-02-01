@@ -2,6 +2,7 @@ from itertools import permutations
 import json
 import os
 import re
+import time
 from tqdm import tqdm
 import imageio.v2 as iio
 import numpy as np
@@ -122,7 +123,10 @@ class PCD:
         self.scan_T_base_cam_dict[frame_number] = T_base_cam
 
     def scan_icp_merge_pcd(self) :        
+        t0 = time.perf_counter()
         merged_pcd, T_acc_list_master, T_acc_list_source = self.scan_icp_merge(pcd_dict=self.scan_pcd_dict)                
+        t1 = time.perf_counter()
+        print(rf">>>>>>>>>>>>>>>>>>>> icp merge time : {t1 - t0}")
         
         T_list = T_acc_list_master + T_acc_list_source
         T_List_v2 = []
@@ -191,7 +195,6 @@ class PCD:
                 key=lambda kv: int(kv[0])
             )
         ]
-        
         return T_List_v2, merged_pcd, circle_points_merged
 
 
@@ -390,9 +393,14 @@ class PCD:
             if int(frame_number) in master_frame_number:
                 continue
             source_merge_frame_list.append({"number" : frame_number, "pcd" : pcd_dict[frame_number]})
+        sm_start = time.perf_counter()
         merged_master_frames, T_acc_master_list = self._icp_merge_master_frames(master_frames=master_merge_frame_list)
+        sm_end = time.perf_counter()
+        print(rf"master merge icp time : {sm_end - sm_start}")
+        ss_start = time.perf_counter()
         merged_all, T_acc_source_list = self._icp_merge_source_frames(merged_master=merged_master_frames, source_frames=source_merge_frame_list)
-        print("align finish")
+        ss_end = time.perf_counter()
+        print(rf"source merge icp time : {ss_end - ss_start}")
         return merged_all, T_acc_master_list, T_acc_source_list
 
     def _icp_merge(self, pcd_dict : dict[int, object]):
@@ -410,49 +418,169 @@ class PCD:
         print("align finish")
         return merged_all, T_acc_master_list, T_acc_source_list
     
-    def _icp_merge_master_frames(self, master_frames):
+    # def _icp_merge_master_frames(self, master_frames):
+    #     merged_pcd = copy.deepcopy(master_frames[0]["pcd"])
+    #     T_list = [{"number": master_frames[0]["number"], "Transform": np.eye(4)}]
+
+    #     for i in range(1, len(master_frames)):
+    #         source = master_frames[i]["pcd"]
+    #         target = merged_pcd
+
+
+    #         _, T_rel = self._icp_multistage_varying_voxel_fast(
+    #             source=source,
+    #             target=target,
+    #             init_T=np.eye(4)   # base에서 이미 맞았으니 I 근처 미세조정
+    #         )
+
+    #         src_aligned = copy.deepcopy(source)
+    #         src_aligned.transform(T_rel)
+    #         merged_pcd += src_aligned
+
+    #         T_list.append({"number": master_frames[i]["number"], "Transform": T_rel})
+
+    #     return merged_pcd, T_list
+    
+
+    def _icp_merge_master_frames(
+        self, master_frames,
+        icp_voxel=1.0,          # ICP에 쓸 타겟 해상도 (mm)
+        merge_voxel=0.5,        # 최종 merged를 너무 키우지 않기 위한 압축 (mm)
+        compress_every=1,       # 몇 번 합칠 때마다 merged를 압축할지
+    ):
         merged_pcd = copy.deepcopy(master_frames[0]["pcd"])
+        # ✅ ICP 타겟으로 쓸 "누적 다운샘플 맵"을 따로 유지
+        merged_pcd_icp = merged_pcd.voxel_down_sample(float(icp_voxel))
+
         T_list = [{"number": master_frames[0]["number"], "Transform": np.eye(4)}]
 
         for i in range(1, len(master_frames)):
             source = master_frames[i]["pcd"]
-            target = merged_pcd
 
-            _, T_rel = self._icp_multistage_varying_voxel(
-                source=source,
-                target=target,
-                init_T=np.eye(4)   # base에서 이미 맞았으니 I 근처 미세조정
+            target_icp = merged_pcd_icp
+            source_icp = source.voxel_down_sample(icp_voxel)
+
+            target_icp = self.crop_target_around_source(
+                target=target_icp,
+                source=source_icp,
+                margin_mm=200.0,   # 150~300mm로 튜닝 시작
+            )
+
+            # ✅ ICP는 항상 작은 타겟(merged_pcd_icp)에만 수행
+            _, T_rel = self._icp_multistage_varying_voxel_fast(
+                source=source_icp,
+                target=target_icp,
+                init_T=np.eye(4),
             )
 
             src_aligned = copy.deepcopy(source)
             src_aligned.transform(T_rel)
+
+            # merge (원본 누적)
             merged_pcd += src_aligned
+
+            # ✅ ICP 타겟 업데이트: 새로 들어온 aligned 소스를 다운샘플해서 누적
+            merged_pcd_icp += src_aligned.voxel_down_sample(float(icp_voxel))
+            # 필요하면 한번 더 압축 (중복점 정리)
+            merged_pcd_icp = merged_pcd_icp.voxel_down_sample(float(icp_voxel))
+
+            # ✅ merged 자체도 너무 커지면 주기적으로 압축(선택)
+            if compress_every and (i % int(compress_every) == 0):
+                merged_pcd = merged_pcd.voxel_down_sample(float(merge_voxel))
 
             T_list.append({"number": master_frames[i]["number"], "Transform": T_rel})
 
         return merged_pcd, T_list
+
     
-    def _icp_merge_source_frames(self, merged_master, source_frames):
+    # def _icp_merge_source_frames(self, merged_master, source_frames):
+    #     merged_pcd = copy.deepcopy(merged_master)
+    #     T_list = []
+
+    #     for sf in source_frames:
+    #         source = sf["pcd"]
+    #         target = merged_pcd  # 또는 merged_master (더 안정적/더 빠름은 merged_master)
+
+    #         _, T_rel = self._icp_multistage_varying_voxel_fast(
+    #             source=source,
+    #             target=target,
+    #             init_T=np.eye(4)
+    #         )
+
+    #         src_aligned = copy.deepcopy(source)
+    #         src_aligned.transform(T_rel)
+    #         merged_pcd += src_aligned
+
+    #         T_list.append({"number": sf["number"], "Transform": T_rel})
+
+    #     return merged_pcd, T_list      
+
+    def _icp_merge_source_frames(
+        self,
+        merged_master,
+        source_frames,
+        icp_voxel=1.0,          # ICP에 쓸 타겟 해상도 (mm)
+        merge_voxel=0.5,        # merged_pcd가 너무 커지는 것 방지 (mm)
+        compress_every=1,       # 몇 번 합칠 때마다 merged_pcd 압축할지
+        target_mode="icpmap",   # "icpmap"(추천) | "master" | "live"
+    ):
+        """
+        merged_master: 이미 master frames로 merge된 pcd (world/base 기준으로 어느정도 맞아있는 상태 가정)
+        source_frames: [{"number":..., "pcd": PointCloud}, ...]
+        target_mode:
+        - "icpmap":  누적 다운샘플 맵(merged_pcd_icp)을 타겟으로 ICP (빠름/실전 추천)
+        - "master":  고정된 merged_master_icp만 타겟으로 ICP (더 안정적일 수 있음)
+        - "live":    현재 merged_pcd에서 만든 다운샘플 맵을 타겟으로 ICP (개념상 live)
+        """
+        import copy
+        import numpy as np
+
         merged_pcd = copy.deepcopy(merged_master)
         T_list = []
 
-        for sf in source_frames:
-            source = sf["pcd"]
-            target = merged_pcd  # 또는 merged_master (더 안정적/더 빠름은 merged_master)
+        # ✅ ICP 타겟용: master 고정 맵
+        merged_master_icp = merged_pcd.voxel_down_sample(float(icp_voxel))
 
-            _, T_rel = self._icp_multistage_varying_voxel(
-                source=source,
-                target=target,
-                init_T=np.eye(4)
+        # ✅ ICP 타겟용: 누적 맵 (source를 붙일수록 업데이트)
+        merged_pcd_icp = copy.deepcopy(merged_master_icp)
+
+        for i, sf in enumerate(source_frames, start=1):
+            source = sf["pcd"]
+
+            target_icp = merged_pcd_icp
+            source_icp = source.voxel_down_sample(icp_voxel)
+
+            target_icp = self.crop_target_around_source(
+                target=target_icp,
+                source=source_icp,
+                margin_mm=200.0,   # 150~300mm로 튜닝 시작
+            )
+            # ✅ ICP는 항상 작은 타겟(target_icp)에만 수행
+            _, T_rel = self._icp_multistage_varying_voxel_fast(
+                source=source_icp,
+                target=target_icp,
+                init_T=np.eye(4),
             )
 
             src_aligned = copy.deepcopy(source)
             src_aligned.transform(T_rel)
+
+            # merge (원본 누적)
             merged_pcd += src_aligned
+
+            # ✅ 타겟 모드가 icpmap일 때만 누적 맵 업데이트 (master는 고정, live는 매번 새로 생성)
+            if target_mode == "icpmap":
+                merged_pcd_icp += src_aligned.voxel_down_sample(float(icp_voxel))
+                merged_pcd_icp = merged_pcd_icp.voxel_down_sample(float(icp_voxel))
+
+            # ✅ merged 자체도 너무 커지면 주기적으로 압축(선택)
+            if compress_every and (i % int(compress_every) == 0):
+                merged_pcd = merged_pcd.voxel_down_sample(float(merge_voxel))
 
             T_list.append({"number": sf["number"], "Transform": T_rel})
 
-        return merged_pcd, T_list      
+        return merged_pcd, T_list
+
 
     def _icp_multistage_varying_voxel(self,
         source, target, init_T=None,
@@ -483,7 +611,7 @@ class PCD:
             else:
                 estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint()
 
-            criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=int(max_iter))
+            criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=int(max_iter), relative_fitness=1e-6, relative_rmse=1e-6,)
 
             last = o3d.pipelines.registration.registration_icp(
                 src, tgt,
@@ -501,7 +629,113 @@ class PCD:
             if corr == 0:
                 break       
 
+        return last, T   
+        
+    def _icp_multistage_varying_voxel_fast(
+        self,
+        source, target, init_T=None,
+        stages=((2.0, 4.0, 15), (1.0, 1.5, 10), (0.5, 0.7, 6)),
+        use_point_to_plane=True,
+        normal_radius_mul=3.0,
+        normal_max_nn=30,
+        # 추가: 조기 종료(수렴) 조건
+        min_rmse_improve=1e-4,
+        min_fitness_improve=1e-4,
+    ):
+
+        if init_T is None:
+            init_T = np.eye(4, dtype=np.float64)
+
+        T = init_T.copy()
+        last = None
+
+        # ✅ stage별 downsample 캐시
+        src_cache = {}
+        tgt_cache = {}
+
+        prev_rmse = None
+        prev_fit = None
+
+        for stage_idx, (voxel_mm, max_corr_mm, max_iter) in enumerate(stages, start=1):
+            voxel_mm = float(voxel_mm)
+            max_corr_mm = float(max_corr_mm)
+
+            # ---- cache downsample ----
+            src = src_cache.get(voxel_mm)
+            if src is None:
+                src = source.voxel_down_sample(voxel_mm)
+                src_cache[voxel_mm] = src
+
+            tgt = tgt_cache.get(voxel_mm)
+            if tgt is None:
+                tgt = target.voxel_down_sample(voxel_mm)
+                tgt_cache[voxel_mm] = tgt
+
+            # ---- estimation ----
+            if use_point_to_plane:
+                # ✅ Point-to-plane: target normal만 있으면 됨 (source normal 불필요)
+                if not tgt.has_normals():
+                    normal_radius_mm = float(voxel_mm * normal_radius_mul)
+                    tgt.estimate_normals(
+                        o3d.geometry.KDTreeSearchParamHybrid(
+                            radius=normal_radius_mm,
+                            max_nn=int(normal_max_nn)
+                        )
+                    )
+                    tgt.normalize_normals()
+
+                estimation = o3d.pipelines.registration.TransformationEstimationPointToPlane()
+            else:
+                estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint()
+
+            criteria = o3d.pipelines.registration.ICPConvergenceCriteria(
+                max_iteration=int(max_iter)
+            )
+
+            last = o3d.pipelines.registration.registration_icp(
+                src, tgt,
+                max_correspondence_distance=max_corr_mm,
+                init=T,
+                estimation_method=estimation,
+                criteria=criteria
+            )
+            T = np.asarray(last.transformation, dtype=np.float64)
+
+            corr = len(last.correspondence_set)
+            print(
+                f"[stage {stage_idx}] voxel={voxel_mm}mm corr={max_corr_mm}mm iter={max_iter} "
+                f"corrN={corr} fitness={last.fitness:.6f} rmse={last.inlier_rmse:.6f}"
+            )
+
+            if corr == 0:
+                break
+
+            # ✅ 조기 종료: fitness/rmse 개선이 거의 없으면 다음 stage로 가도 의미가 적음
+            if prev_rmse is not None:
+                rmse_improve = prev_rmse - float(last.inlier_rmse)
+                fit_improve = float(last.fitness) - prev_fit
+
+                if rmse_improve < min_rmse_improve and fit_improve < min_fitness_improve:
+                    # 현재 stage에서 이미 충분히 수렴했다고 보고 탈출
+                    break
+
+            prev_rmse = float(last.inlier_rmse)
+            prev_fit = float(last.fitness)
+
         return last, T
+    
+    def crop_target_around_source(self, target: o3d.geometry.PointCloud,
+                              source: o3d.geometry.PointCloud,
+                              margin_mm: float):
+        if len(target.points) == 0 or len(source.points) == 0:
+            return target
+        aabb = source.get_axis_aligned_bounding_box()
+        minb = aabb.min_bound - float(margin_mm)
+        maxb = aabb.max_bound + float(margin_mm)
+        box = o3d.geometry.AxisAlignedBoundingBox(min_bound=minb, max_bound=maxb)
+        cropped = target.crop(box)
+        # 너무 과하게 잘리면 fallback
+        return target if len(cropped.points) < 200 else cropped
 
     def _transform_calibration_file_to_T_4x4(self, calibration_file : str, to_meters : bool = False):
         path = calibration_file
@@ -699,13 +933,13 @@ class PCD:
             gy = ry + y_off
             
 
-            vis_final = texture.copy()
-            if self._verbose == True:
-                cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
-                cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
-                cv2.imshow("final(best overall)", vis_final)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
+            # vis_final = texture.copy()
+            # if self._verbose == True:
+            #     cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
+            #     cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
+            #     cv2.imshow("final(best overall)", vis_final)
+            #     cv2.waitKey(0)
+            #     cv2.destroyAllWindows()
 
             results.append((gx, gy, rr, score, arc_cov))
 
