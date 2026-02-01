@@ -445,23 +445,43 @@ class MainWindow(QMainWindow):
         self.set_inspected_result_pointcloud(pcd_input=self.result_pcd, center_input=pcd_cad, size= 0.5, sampling_rate=0.3)
         self.log.append("merge frames complete.")
         
-    def on_scan_inspect(self) :
+    def on_scan_inspect(self):
         self.log.append("Inspecting data...")
+
         roi_hole_points_dict = {}
         frame_pcd = {}
         pose_dict = {}
         self.frame_idx = {}
-        
-        for i in range(len(self.pcd.scan_path_dict.items())) :            
-            pcd = PCD()
-            point_x, point_y, point_z, texture, pose_path, mask_array = self.pcd.scan_path_dict[i+1]
 
-            pts_cam = pcd.scan_make_cam_pcd(point_x=point_x, point_y=point_y, point_z=point_z, texture=texture, mask_array=mask_array)
-            frame_number = i+1
-            X = point_x
-            Y = point_y
-            Z = point_z
+        # ---------- helpers ----------
+        def batched(lst, bs):
+            for j in range(0, len(lst), bs):
+                yield lst[j:j + bs], j
 
+        # ✅ 튜닝 파라미터
+        seg_pad = 40
+        roi_radius_mm = 4.0
+        r3d = 40.0
+        batch_size = 12  # VRAM 봐서 8~24 사이 튜닝
+        min_seg_pts = 10
+
+        # ✅ CAD points는 프레임마다 만들 필요 없음 (고정)
+        cad_points = np.array(
+            self.utils.cad_data[self.current_model()]["cad_welding_points"],
+            dtype=np.float64
+        )
+
+        tic1 = time.perf_counter()
+
+        # ---------- frame loop ----------
+        # (len(self.pcd.scan_path_dict.items())) 대신 len(self.pcd.scan_path_dict) 가 더 직관적이면 바꿔도 됨
+        for i in range(len(self.pcd.scan_path_dict.items())):
+            point_x, point_y, point_z, texture, pose_path, mask_array = self.pcd.scan_path_dict[i + 1]
+            frame_number = i + 1
+
+            X, Y, Z = point_x, point_y, point_z
+
+            # 유효 점 마스크
             mask_valid = np.isfinite(X) & np.isfinite(Y) & np.isfinite(Z)
             mask_valid = np.asarray(mask_valid, dtype=bool)
             mask_nonzero = (X != 0) | (Y != 0) | (Z != 0)
@@ -469,156 +489,212 @@ class MainWindow(QMainWindow):
             mask_valid &= mask_nonzero
 
             ys_idx, xs_idx = np.where(mask_valid)
+            if ys_idx.size == 0:
+                # pose 저장 후 skip
+                pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?',
+                                                    open(pose_path, 'r', encoding='utf-8').read())][:6]
+                pose_dict[frame_number] = pose
+                continue
+
+            # 카메라 점들 (N,3)
             pts_cam = np.stack([
                 X[ys_idx, xs_idx],
                 Y[ys_idx, xs_idx],
                 Z[ys_idx, xs_idx]
-            ], axis=1)
+            ], axis=1).astype(np.float64)
 
-            image_bgr = texture            
+            # 색상 (N,3)
+            image_bgr = texture
             bgr = image_bgr[ys_idx, xs_idx]
-            rgb = bgr[:, ::-1].astype(np.float64) / 255.0 
-            
+            rgb = bgr[:, ::-1].astype(np.float32) / 255.0
+
+            # 변환 (cam->world->cad)
             T_cam_to_world = self.T_list[i]
             T_world_to_cad = self.result_T
             T_cam_to_cad = T_world_to_cad @ T_cam_to_world
             self.frame_idx[frame_number] = i
 
-            pts_cam = self.transform_points(pts_cam, T_cam_to_world)   
-            pts_cam = self.transform_points(pts_cam, T_world_to_cad)
+            pts_cad = self.transform_points(pts_cam, T_cam_to_cad).astype(np.float64)
 
+            # frame_pcd 저장
             frame_pcd[frame_number] = {
-                "points" : pts_cam,
-                "rgb" : rgb,
-                "ys_idx" : ys_idx,
-                "xs_idx" : xs_idx
+                "points": pts_cad,
+                "rgb": rgb,
+                "ys_idx": ys_idx,
+                "xs_idx": xs_idx
             }
 
+            # segmentation용 이미지
             image_for_seg = texture
             img_h, img_w, _ = image_for_seg.shape
 
-            cad_points  = np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)
-
-            pcd_cad = o3d.geometry.PointCloud()
-            pcd_cad.points = o3d.utility.Vector3dVector(cad_points.astype(np.float64))
-            
-            
-            pp = np.asarray(pts_cam, dtype=np.float64).reshape(-1, 3)
+            # KDTree 준비 (프레임당 1회)
             pcd_pts_cad = o3d.geometry.PointCloud()
-            pcd_pts_cad.points = o3d.utility.Vector3dVector(pp)
+            pcd_pts_cad.points = o3d.utility.Vector3dVector(pts_cad)
+            kdt = o3d.geometry.KDTreeFlann(pcd_pts_cad)
 
-            seg_pad = 40
+            # numpy view (프레임당 1회)
+            pcd_pts_np = pts_cad  # (N,3)
 
-            for roi_id, center in enumerate(cad_points, start=1):                
-                dist = np.linalg.norm(pts_cam - center, axis=1)                
-                mask_roi_3d = dist <= 4
-                num_roi_pts = np.count_nonzero(mask_roi_3d)
+            # ---------- 1) ROI crop 수집 ----------
+            crops = []
+            metas = []  # (roi_id, y_min, x_min, ch, cw, idx_roi)
 
-                if num_roi_pts == 0:
+            for roi_id, center in enumerate(cad_points, start=1):
+                # ROI 주변 점 전역 인덱스(4mm)
+                _, idx_roi, _ = kdt.search_radius_vector_3d(center, float(roi_radius_mm))
+                if len(idx_roi) == 0:
                     continue
+                idx_roi = np.asarray(idx_roi, dtype=np.int64)
 
-                roi_y = ys_idx[mask_roi_3d]
-                roi_x = xs_idx[mask_roi_3d]
+                roi_y = ys_idx[idx_roi]
+                roi_x = xs_idx[idx_roi]
 
                 y_min, y_max = int(roi_y.min()), int(roi_y.max())
                 x_min, x_max = int(roi_x.min()), int(roi_x.max())
 
-                pad = seg_pad
-                y_min = max(y_min - pad, 0)
-                x_min = max(x_min - pad, 0)
-                y_max = min(y_max + pad, img_h - 1)
-                x_max = min(x_max + pad, img_w - 1)
+                # pad 적용
+                y_min = max(y_min - seg_pad, 0)
+                x_min = max(x_min - seg_pad, 0)
+                y_max = min(y_max + seg_pad, img_h - 1)
+                x_max = min(x_max + seg_pad, img_w - 1)
 
                 if y_max <= y_min or x_max <= x_min:
-                    print(rf"{frame_number} // {roi_id} : ymx_{y_max} / ymn_{y_min} / xmx_{x_max} / xmn_{x_min}")
                     continue
 
                 crop_img = image_for_seg[y_min:y_max + 1, x_min:x_max + 1]
-
-                if crop_img.size == 0:                    
+                if crop_img.size == 0:
                     continue
-                
+
                 ch, cw, _ = crop_img.shape
                 if ch < 16 or cw < 16:
                     continue
 
-                results = self.seg_model(crop_img, device='cpu', verbose=False)
-                   
-                # cv2.imwrite(rf"C:\Users\SehoonKang\Desktop\s\RH\crop_{frame_number}_{roi_id}.png", crop_img)
-                # for i, result in enumerate(results):
-                #     res_img = result.plot()
-                #     cv2.imwrite(rf"C:\Users\SehoonKang\Desktop\s\RH\seg_{frame_number}_{roi_id}.png", res_img)
+                crops.append(crop_img)
+                metas.append((roi_id, y_min, x_min, ch, cw, idx_roi))
 
-                if len(results) == 0 or results[0].masks is None:
+            # crop 없으면 pose 저장 후 다음 프레임
+            if len(crops) == 0:
+                pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?',
+                                                    open(pose_path, 'r', encoding='utf-8').read())][:6]
+                pose_dict[frame_number] = pose
+                continue
+
+            # ---------- 2) YOLO 배치 추론 (chunk) ----------
+            results_all = [None] * len(crops)
+            for crop_chunk, offset in batched(crops, batch_size):
+                res_chunk = self.seg_model(crop_chunk, device='cuda:0', verbose=False)
+                results_all[offset:offset + len(crop_chunk)] = res_chunk
+
+            # ---------- 3) 후처리: in_crop_2d / dist3d / seg_mask_global 제거 버전 ----------
+            for (roi_id, y_min, x_min, ch, cw, idx_roi), res in zip(metas, results_all):
+                if res is None or getattr(res, "masks", None) is None or res.masks is None:
                     continue
 
-                masks_yolo = results[0].masks.data.cpu().numpy()
+                masks = res.masks.data
+                if masks is None:
+                    continue
+
+                masks_yolo = masks.detach().float().cpu().numpy()  # (K, H, W)
                 if masks_yolo.shape[0] == 0:
-                    print(f"[INFO] ROI : mask 개수 0 (view {i}).")
                     continue
 
-                mask_bin = (masks_yolo > 0.5)
-                full_mask_local = np.any(mask_bin, axis=0)
-                Hm, Wm = full_mask_local.shape
+                mask_local = np.any(masks_yolo > 0.5, axis=0)  # (Hm, Wm)
+                Hm, Wm = mask_local.shape
 
+                # 마스크 크기 불일치 시 resize
                 if (Hm, Wm) != (ch, cw):
-                    full_mask_local = cv2.resize(full_mask_local.astype(np.uint8), (cw, ch), interpolation=cv2.INTER_NEAREST).astype(bool)                 
-                
-                mask_resized = full_mask_local
-                in_crop_2d = (
-                    (ys_idx >= y_min) & (ys_idx <= y_max) &
-                    (xs_idx >= x_min) & (xs_idx <= x_max)
+                    mask_local = cv2.resize(
+                        mask_local.astype(np.uint8),
+                        (cw, ch),
+                        interpolation=cv2.INTER_NEAREST
+                    ).astype(bool)
+                    Hm, Wm = mask_local.shape
+
+                # idx_roi(4mm 반경) 점들 중 crop bbox 안에 있는 점만
+                roi_y = ys_idx[idx_roi]
+                roi_x = xs_idx[idx_roi]
+
+                in_crop_local = (
+                    (roi_y >= y_min) & (roi_y < y_min + ch) &
+                    (roi_x >= x_min) & (roi_x < x_min + cw)
                 )
-
-                if not np.any(in_crop_2d):
+                if not np.any(in_crop_local):
                     continue
 
-                ys_c = ys_idx[in_crop_2d] - y_min
-                xs_c = xs_idx[in_crop_2d] - x_min
-                mask_on_pixels_small = mask_resized[ys_c, xs_c]
+                idx_crop = idx_roi[in_crop_local]  # 전역 인덱스(작음)
+                ys_c = ys_idx[idx_crop] - y_min
+                xs_c = xs_idx[idx_crop] - x_min
 
+                # 안전(혹시라도)
+                ok = (ys_c >= 0) & (ys_c < Hm) & (xs_c >= 0) & (xs_c < Wm)
+                if not np.any(ok):
+                    continue
+                idx_crop = idx_crop[ok]
+                ys_c = ys_c[ok]
+                xs_c = xs_c[ok]
 
-                pcd_pts_np = np.asarray(pcd_pts_cad.points, dtype=np.float64)  # (N,3)
-
-                # (B) seg mask로 1차 3D 포인트 추출 (여기서 중심을 구함)
-                seg_pts = pcd_pts_np[in_crop_2d][mask_on_pixels_small]
-                if seg_pts.shape[0] < 10:
-                    # seg는 있는데 3D로 매핑되는 점이 너무 적으면 fallback
+                mask_on_pixels = mask_local[ys_c, xs_c]
+                if not np.any(mask_on_pixels):
                     continue
 
+                seg_idx = idx_crop[mask_on_pixels]  # 전역 인덱스
+                if seg_idx.size < min_seg_pts:
+                    continue
+
+                seg_pts = pcd_pts_np[seg_idx]
                 center3d = seg_pts.mean(axis=0)
 
-                # (C) 중심 기준 3D in_crop 정의 (반경 r3d는 튜닝)
-                r3d = 40.0  # mm 기준 (너 데이터에 맞게 20~80 사이로 시작)
-                dist3d = np.linalg.norm(pcd_pts_np - center3d[None, :], axis=1)
-                in_crop3d = dist3d <= r3d
+                # dist3d 전체 계산 대신 KDTree 반경 검색
+                _, idx_r3d, _ = kdt.search_radius_vector_3d(center3d.astype(np.float64), float(r3d))
+                if len(idx_r3d) == 0:
+                    continue
+                idx_r3d = np.asarray(idx_r3d, dtype=np.int64)
 
-                # (D) 최종 포인트: seg 마스크 & 3D 중심 ROI
-                #     여기서도 2D seg mask가 필요하니까, 2D seg 조건을 전체 프레임으로 확장해야 함
-                #     가장 쉬운 방법: in_crop2d에서 seg mask True였던 인덱스들을 "전역 인덱스"로 복원
-                global_idx_in_crop2d = np.where(in_crop_2d)[0]
-                global_idx_seg = global_idx_in_crop2d[np.where(mask_on_pixels_small)[0]]
+                # seg_idx ∩ idx_r3d
+                final_idx = np.intersect1d(seg_idx, idx_r3d, assume_unique=False)
+                if final_idx.size == 0:
+                    continue
 
-                # seg에 해당하는 전역 bool 마스크 생성 (N,)
-                seg_mask_global = np.zeros(pcd_pts_np.shape[0], dtype=bool)
-                seg_mask_global[global_idx_seg] = True
-
-                # 최종
-                final_mask = seg_mask_global & in_crop3d  # (N,)
-                roi_hole_pts = pcd_pts_np[final_mask]
-                n_hole = roi_hole_pts.shape[0]
-                
-                if n_hole > 0:
+                roi_hole_pts = pcd_pts_np[final_idx]
+                if roi_hole_pts.shape[0] > 0:
                     roi_hole_points_dict.setdefault(roi_id, {})[frame_number] = roi_hole_pts
 
-            pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', open(pose_path, 'r', encoding='utf-8').read())]
-            pose = pose[:6]
+            # pose 저장
+            pose = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?',
+                                                open(pose_path, 'r', encoding='utf-8').read())][:6]
             pose_dict[frame_number] = pose
 
-        welding_center_point_list, welding_pcd_dict, plane_pcd_dict, welding_center_point_dict = self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
-        welding_points_points = np.array(welding_center_point_list, dtype=np.float32)
+        toc1 = time.perf_counter()
+        print(rf"segmentation : {toc1 - tic1} --------------------------------")
+
+        # ---------- inspect welding points ----------
+        tic2 = time.perf_counter()
+        welding_center_point_list, welding_pcd_dict, plane_pcd_dict, welding_center_point_dict = \
+            self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
+        toc2 = time.perf_counter()
+        print(rf"inspect real welding points : {toc2 - tic2} --------------------------------")
+
+        # ---------- safe pointcloud build ----------
+        welding_points_points = np.asarray(welding_center_point_list, dtype=np.float64)
+        if welding_points_points.size == 0:
+            print("[WARN] welding_center_point_list is empty.")
+            return
+
+        if welding_points_points.ndim != 2 or welding_points_points.shape[1] != 3:
+            raise ValueError(f"Invalid welding points shape: {welding_points_points.shape}")
+
+        # NaN/Inf 제거
+        mask_finite = np.isfinite(welding_points_points).all(axis=1)
+        welding_points_points = welding_points_points[mask_finite]
+        if welding_points_points.shape[0] == 0:
+            print("[WARN] welding points are all non-finite after filtering.")
+            return
+
         welding_points_pcd = o3d.geometry.PointCloud()
-        welding_points_pcd.points = o3d.utility.Vector3dVector(welding_points_points.astype(np.float64))
+        welding_points_pcd.points = o3d.utility.Vector3dVector(welding_points_points)
+
+
             
     def on_inspect(self):
         self.log.append("Inspecting data...")
@@ -1131,7 +1207,7 @@ class MainWindow(QMainWindow):
 
         pts = np.asarray(pcd.points, dtype=np.float64)
         if pts.size == 0:
-            return None, None, np.array([], dtype=np.int64), False, None
+            return None, None, np.array([], dtype=np.int64), False, None, None
 
         # 1) plane fit
         plane_model, inliers = pcd.segment_plane(
@@ -1223,14 +1299,14 @@ class MainWindow(QMainWindow):
         plane_pcd  = pcd.select_by_index(far_idx.tolist())
 
         if len(welding_pcd.points) == 0:
-            return welding_pcd, plane_pcd, plane_model2, False, None
+            return welding_pcd, plane_pcd, plane_model2, False, None, None
 
         # if len(welding_pcd.points) >= 10:
         #     eps = self.auto_eps(welding_pcd, factor=2.5)
         #     welding_pcd = self.keep_largest_spatial_component(welding_pcd, eps, min_points=10)
 
         if len(welding_pcd.points) == 0:
-            return welding_pcd, plane_pcd, plane_model2, False, None
+            return welding_pcd, plane_pcd, plane_model2, False, None, None
 
         # welding_pcd.paint_uniform_color([1, 0, 0]) 
         # plane_pcd.paint_uniform_color([0, 1, 0])
@@ -1244,7 +1320,7 @@ class MainWindow(QMainWindow):
         n_plane   = len(plane_pcd.points)
 
         if n_welding < count_threshold or n_plane < count_threshold:
-            return welding_pcd, plane_pcd, plane_model2, False, None
+            return welding_pcd, plane_pcd, plane_model2, False, None, None
 
         # plane1 기준 signed를 welding/plane 각각 다시 계산
         w_pts = np.asarray(welding_pcd.points, dtype=np.float64)
