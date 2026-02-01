@@ -583,7 +583,7 @@ class MainWindow(QMainWindow):
             # ---------- 2) YOLO 배치 추론 (chunk) ----------
             results_all = [None] * len(crops)
             for crop_chunk, offset in batched(crops, batch_size):
-                res_chunk = self.seg_model(crop_chunk, device='cuda:0', verbose=False)
+                res_chunk = self.seg_model(crop_chunk, device='cpu', verbose=False)
                 results_all[offset:offset + len(crop_chunk)] = res_chunk
 
             # ---------- 3) 후처리: in_crop_2d / dist3d / seg_mask_global 제거 버전 ----------
@@ -670,31 +670,63 @@ class MainWindow(QMainWindow):
 
         # ---------- inspect welding points ----------
         tic2 = time.perf_counter()
-        welding_center_point_list, welding_pcd_dict, plane_pcd_dict, welding_center_point_dict = \
-            self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
+        samples = self.inspect_real_welding_point(roi_hole_points_dict=roi_hole_points_dict, frame_pcd=frame_pcd, pad=5)
         toc2 = time.perf_counter()
         print(rf"inspect real welding points : {toc2 - tic2} --------------------------------")
 
-        # ---------- safe pointcloud build ----------
-        welding_points_points = np.asarray(welding_center_point_list, dtype=np.float64)
-        if welding_points_points.size == 0:
-            print("[WARN] welding_center_point_list is empty.")
+        self.overlay_welding_marks(samples=samples)
+
+
+    def overlay_welding_marks(self, samples, *, size=50.0, alpha=1.0, z_lift=0.0):
+        # 1) 기존 오버레이 제거
+        if getattr(self.view3d, "weld_mark_item", None) is not None:
+            self.view3d.view.removeItem(self.view3d.weld_mark_item)
+            self.view3d.weld_mark_item = None
+
+        if getattr(self.view3d, "weld_text_items", None) is not None:
+            for it in self.view3d.weld_text_items:
+                self.view3d.view.removeItem(it)
+        self.view3d.weld_text_items = []
+
+        if not samples:
             return
 
-        if welding_points_points.ndim != 2 or welding_points_points.shape[1] != 3:
-            raise ValueError(f"Invalid welding points shape: {welding_points_points.shape}")
+        # 2) 포인트 위치/색 준비
+        pos = []
+        col = []
+        for row in samples:
+            x, y, z = row.source_xyz  # (x,y,z)
+            pos.append([float(x), float(y), float(z) + float(z_lift)])
+            col.append([1.0, 1.0, 0.0, float(alpha)])            
 
-        # NaN/Inf 제거
-        mask_finite = np.isfinite(welding_points_points).all(axis=1)
-        welding_points_points = welding_points_points[mask_finite]
-        if welding_points_points.shape[0] == 0:
-            print("[WARN] welding points are all non-finite after filtering.")
-            return
+        pos = np.asarray(pos, dtype=np.float32)
+        col = np.asarray(col, dtype=np.float32)
 
-        welding_points_pcd = o3d.geometry.PointCloud()
-        welding_points_pcd.points = o3d.utility.Vector3dVector(welding_points_points)
+        # 3) "네모처럼 보이는" 큰 포인트 찍기 (가장 간단)
+        self.view3d.weld_mark_item = gl.GLScatterPlotItem(
+            pos=pos,
+            color=col,
+            size=float(size),
+            pxMode=True  # 화면 픽셀 크기로 유지(마커처럼 보기 좋음)
+        )
+        self.view3d.view.addItem(self.view3d.weld_mark_item)
 
+        # 4) roi_id 텍스트를 좌상단으로 약간 오프셋해서 표시
+        #    (화면 좌표가 아니라 월드 좌표라 완벽한 "좌상단" 고정은 아니지만,
+        #     점 기준으로 살짝 위/옆으로 치우치게 하면 시각적으로 좌상단처럼 보임)
+        text_dx = 5.0
+        text_dy = 5.0
+        text_dz = 5.0
 
+        for row in samples:
+            x, y, z = row.source_xyz
+            t = gl.GLTextItem(
+                pos=pg.Vector(float(x + text_dx), float(y + text_dy), float(z + text_dz)),
+                text=str(row.roi_id),
+                color=(1.0, 1.0, 1.0, 1.0)  # 흰색 글씨
+            )
+            self.view3d.view.addItem(t)
+            self.view3d.weld_text_items.append(t)
             
     def on_inspect(self):
         self.log.append("Inspecting data...")
@@ -1153,7 +1185,7 @@ class MainWindow(QMainWindow):
         self.export_roi_distance_excel(samples, rf"{self.current_model()}_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx") 
 
         
-        return src_list, welding_pcd_dict, plane_pcd_dict, src_points
+        return samples
 
     def points_to_pcd(self, points_xyz, color=(1.0, 0.0, 0.0)):
         pts = np.asarray(points_xyz, dtype=np.float64).reshape(-1, 3)
