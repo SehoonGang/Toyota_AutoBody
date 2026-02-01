@@ -460,7 +460,7 @@ class MainWindow(QMainWindow):
 
         # ✅ 튜닝 파라미터
         seg_pad = 40
-        roi_radius_mm = 4.0
+        roi_radius_mm = 8
         r3d = 40.0
         batch_size = 12  # VRAM 봐서 8~24 사이 튜닝
         min_seg_pts = 10
@@ -675,7 +675,6 @@ class MainWindow(QMainWindow):
         print(rf"inspect real welding points : {toc2 - tic2} --------------------------------")
 
         self.overlay_welding_squares(samples=samples)
-
 
     def overlay_welding_squares(self, samples, *, side_mm=10.0, line_width=2.0, z_lift=0.0,
                            sphere_radius_mm=1, sphere_rows=10, sphere_cols=20):
@@ -1203,19 +1202,8 @@ class MainWindow(QMainWindow):
                                   real_ng=is_welding,   
                                   distance_threshold= 4))
             
-        src_list = []
-
-        for roi_id in range(1, 51):
-            if roi_id not in src_points:
-                continue
-
-            cad_point = np.asarray(np.array(self.utils.cad_data[self.current_model()]["cad_welding_points"], dtype=np.float32)[roi_id-1], dtype=np.float64).reshape(3,)
-            src_point = np.asarray(src_points[roi_id], dtype=np.float64).reshape(3,)
-
-            src_list.append(src_point)
- 
         samples.sort(key=lambda r: r.roi_id)
-        self.export_roi_distance_excel(samples, rf"{self.current_model()}_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")         
+        self.export_roi_distance_excel(rows=samples, out_xlsx_path= rf"{self.current_model()}_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")         
         return samples
 
     def points_to_pcd(self, points_xyz, color=(1.0, 0.0, 0.0)):
@@ -1513,15 +1501,12 @@ class MainWindow(QMainWindow):
         self,
         rows: Iterable[RoiRow],
         out_xlsx_path: str,
-        sheet_name: str = "ROI_Report",
+        sheet_name: str = "Welding_Points",
     ) -> str:
-        """
-        ROI별 CAD 좌표, Source 좌표, 거리, NG 판단을 엑셀로 저장.
-        distance = Euclidean distance between cad_xyz and source_xyz.
-        distance_ng = (distance > distance_threshold) if threshold provided else None
+        # 1. 빠른 조회를 위해 rows 데이터를 딕셔너리로 변환 (ID는 숫자로 가정)
+        # 만약 roi_id가 문자열 '1' 등이라면 int() 처리가 필요할 수 있습니다.
+        row_map = {int(item.roi_id): item for item in rows}
 
-        returns: saved xlsx path
-        """
         headers = [
             "Welding ID",
             "Cad x", "Cad y", "Cad z",
@@ -1535,9 +1520,11 @@ class MainWindow(QMainWindow):
         ws = wb.active
         ws.title = sheet_name
 
-        # Header styling
-        header_fill = PatternFill("solid", fgColor="1F4E79")  # dark blue
+        # 스타일 설정 (기존과 동일)
+        header_fill = PatternFill("solid", fgColor="1F4E79")
         header_font = Font(color="FFFFFF", bold=True)
+        red_fill = PatternFill("solid", fgColor="FFC7CE")
+        red_font = Font(color="9C0006", bold=True)
         center = Alignment(horizontal="center", vertical="center")
 
         ws.append(headers)
@@ -1547,65 +1534,78 @@ class MainWindow(QMainWindow):
             cell.font = header_font
             cell.alignment = center
 
-        # Data rows
-        red_fill = PatternFill("solid", fgColor="FFC7CE")     # light red
-        red_font = Font(color="9C0006", bold=True)
-
+        # 유틸리티: 거리 계산
         def _dist(a, b) -> float:
-            dx = float(a[0]) - float(b[0])
-            dy = float(a[1]) - float(b[1])
-            dz = float(a[2]) - float(b[2])
-            return math.sqrt(dx*dx + dy*dy + dz*dz)
+            return math.sqrt(sum((float(i) - float(j))**2 for i, j in zip(a, b)))
 
-        r = 2
-        for item in rows:
-            cad = item.cad_xyz
-            src = item.source_xyz
-            dist = _dist(cad, src)
+        # 2. total_count만큼 루프 실행 (1부터 시작하거나 0부터 시작)
+        total_count = 51
+        if self.current_model() == "LH" : 
+            total_count = 51
+        else :
+            total_count = 50
 
-            if item.distance_threshold is None:
-                dist_ng = ""  # 기준 없으면 공란
-            else:
-                dist_ng = bool(dist < float(item.distance_threshold))
+        for i in range(total_count):
+            current_id = i + 1  # Excel에 표시될 ID (1번부터 시작한다고 가정)
+            item = row_map.get(current_id)  # 해당 ID의 데이터가 있는지 확인
+            
+            r = i + 2  # 헤더가 1행이므로 데이터는 2행부터
 
-            ws.append([
-                str(item.roi_id),
-                float(cad[0]), float(cad[1]), float(cad[2]),
-                float(src[0]), float(src[1]), float(src[2]),
-                float(dist),
-                bool(item.real_ng),
-                dist_ng if dist_ng != "" else "",
-            ])
+            if item:
+                # 데이터가 있는 경우: 기존 로직 수행
+                cad = item.cad_xyz
+                src = item.source_xyz
+                dist = _dist(cad, src)
 
-            # Align + number formats
-            for c in range(1, len(headers) + 1):
-                ws.cell(row=r, column=c).alignment = center
+                if item.distance_threshold is None:
+                    dist_ng = ""
+                else:
+                    dist_ng = bool(dist < float(item.distance_threshold))
 
-            # 좌표/거리 소수점 포맷
-            for c in range(2, 9):  # cad/source/distance
-                ws.cell(row=r, column=c).number_format = "0.000"
+                row_data = [
+                    str(current_id),
+                    float(cad[0]), float(cad[1]), float(cad[2]),
+                    float(src[0]), float(src[1]), float(src[2]),
+                    float(dist),
+                    bool(item.real_ng),
+                    dist_ng,
+                ]
+                ws.append(row_data)
 
-            # NG 강조(둘 중 하나라도 True면 행을 붉게)
-            real_ng_val = bool(item.real_ng)
-            dist_ng_val = bool(dist_ng) if dist_ng != "" else False
-            if real_ng_val == False or dist_ng_val == False:
+                # 서식 적용
                 for c in range(1, len(headers) + 1):
-                    cell = ws.cell(row=r, column=c)
-                    cell.fill = red_fill
-                    # 글씨도 강조하고 싶으면:
-                    if c in (9, 10):  # real ng, distance ng
-                        cell.font = red_font
+                    ws.cell(row=r, column=c).alignment = center
+                for c in range(2, 9):
+                    ws.cell(row=r, column=c).number_format = "0.000"
 
-            r += 1
+                # NG 강조
+                real_ng_val = bool(item.real_ng)
+                dist_ng_val = bool(dist_ng) if dist_ng != "" else False
+                if real_ng_val == False or dist_ng_val == False:
+                    for c in range(1, len(headers) + 1):
+                        cell = ws.cell(row=r, column=c)
+                        cell.fill = red_fill
+                        if c in (9, 10): cell.font = red_font
+            else:
+                # 3. 데이터가 없는 경우: ID만 적고 나머지는 공란
+                # 빈 리스트를 만들어서 ID만 채우고 append
+                row_data = [
+                    str(current_id),
+                    float(cad[0]), float(cad[1]), float(cad[2])
+                ]
+                ws.append(row_data)
+                for c in range(1, len(headers) + 1):
+                    ws.cell(row=r, column=c).alignment = center
+                for c in range(2, 9):
+                    ws.cell(row=r, column=c).number_format = "0.000"
+                
+                # ID 셀도 가운데 정렬은 유지
+                ws.cell(row=r, column=1).alignment = center
 
-        # Column width autosize (simple)
+        # 컬럼 너비 자동 조절 (기존과 동일)
         for col_idx in range(1, len(headers) + 1):
             col_letter = get_column_letter(col_idx)
-            max_len = 0
-            for cell in ws[col_letter]:
-                val = "" if cell.value is None else str(cell.value)
-                max_len = max(max_len, len(val))
-            ws.column_dimensions[col_letter].width = min(max_len + 2, 28)
+            ws.column_dimensions[col_letter].width = 15 # 고정폭 또는 계산 로직
 
         ws.freeze_panes = "A2"
         wb.save(out_xlsx_path)
