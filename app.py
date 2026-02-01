@@ -266,8 +266,11 @@ class MainWindow(QMainWindow):
         
         self.result_pcd = moved_merge_pcd
         self.result_T = T_to_cad
-        self.set_pointcloud(pcd_input= self.result_pcd, size= 0.5, sampling_rate=0.3)
-        self.log.append("Merged and moved the merged pcd to cad successfully.")
+        t3 = time.perf_counter()
+        self.set_pointcloud(pcd_input= self.result_pcd, size= 0.5, sampling_rate=0.5)
+        t4 = time.perf_counter()
+        print(rf"{t4 - t3} merged rendering time.")
+        self.log.append("Mergedt and moved the merged pcd to cad successfully.")
     
     def on_discover_sensors(self):
         self.devices = {}
@@ -539,11 +542,8 @@ class MainWindow(QMainWindow):
                 if ch < 16 or cw < 16:
                     continue
 
-                tic = time.time()
                 results = self.seg_model(crop_img, device='cpu', verbose=False)
-                toc = time.time()
-
-                print(f"\n\n\nInstance Seg Model Inference Time :{toc - tic}\n\n\n\n")    
+                   
                 # cv2.imwrite(rf"C:\Users\SehoonKang\Desktop\s\RH\crop_{frame_number}_{roi_id}.png", crop_img)
                 # for i, result in enumerate(results):
                 #     res_img = result.plot()

@@ -485,8 +485,8 @@ class PCD:
             merged_pcd_icp = merged_pcd_icp.voxel_down_sample(float(icp_voxel))
 
             # ✅ merged 자체도 너무 커지면 주기적으로 압축(선택)
-            if compress_every and (i % int(compress_every) == 0):
-                merged_pcd = merged_pcd.voxel_down_sample(float(merge_voxel))
+            # if compress_every and (i % int(compress_every) == 0):
+            #     merged_pcd = merged_pcd.voxel_down_sample(float(merge_voxel))
 
             T_list.append({"number": master_frames[i]["number"], "Transform": T_rel})
 
@@ -574,8 +574,8 @@ class PCD:
                 merged_pcd_icp = merged_pcd_icp.voxel_down_sample(float(icp_voxel))
 
             # ✅ merged 자체도 너무 커지면 주기적으로 압축(선택)
-            if compress_every and (i % int(compress_every) == 0):
-                merged_pcd = merged_pcd.voxel_down_sample(float(merge_voxel))
+            # if compress_every and (i % int(compress_every) == 0):
+            #     merged_pcd = merged_pcd.voxel_down_sample(float(merge_voxel))
 
             T_list.append({"number": sf["number"], "Transform": T_rel})
 
