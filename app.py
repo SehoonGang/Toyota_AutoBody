@@ -583,7 +583,7 @@ class MainWindow(QMainWindow):
             # ---------- 2) YOLO 배치 추론 (chunk) ----------
             results_all = [None] * len(crops)
             for crop_chunk, offset in batched(crops, batch_size):
-                res_chunk = self.seg_model(crop_chunk, device='cpu', verbose=False)
+                res_chunk = self.seg_model(crop_chunk, device='cuda:0', verbose=False)
                 results_all[offset:offset + len(crop_chunk)] = res_chunk
 
             # ---------- 3) 후처리: in_crop_2d / dist3d / seg_mask_global 제거 버전 ----------
@@ -674,56 +674,108 @@ class MainWindow(QMainWindow):
         toc2 = time.perf_counter()
         print(rf"inspect real welding points : {toc2 - tic2} --------------------------------")
 
-        self.overlay_welding_marks(samples=samples)
+        self.overlay_welding_squares(samples=samples)
 
 
-    def overlay_welding_marks(self, samples, *, size=50.0, alpha=1.0, z_lift=0.0):
-        # 1) 기존 오버레이 제거
-        if getattr(self.view3d, "weld_mark_item", None) is not None:
-            self.view3d.view.removeItem(self.view3d.weld_mark_item)
-            self.view3d.weld_mark_item = None
+    def overlay_welding_squares(self, samples, *, side_mm=10.0, line_width=2.0, z_lift=0.0,
+                           sphere_radius_mm=1, sphere_rows=10, sphere_cols=20):
+        # 기존 오버레이 제거
+        if getattr(self.view3d, "weld_square_items", None) is not None:
+            for it in self.view3d.weld_square_items:
+                self.view3d.view.removeItem(it)
+        self.view3d.weld_square_items = []
 
         if getattr(self.view3d, "weld_text_items", None) is not None:
             for it in self.view3d.weld_text_items:
                 self.view3d.view.removeItem(it)
         self.view3d.weld_text_items = []
 
+        # ✅ sphere 아이템 제거
+        if getattr(self.view3d, "weld_sphere_items", None) is not None:
+            for it in self.view3d.weld_sphere_items:
+                self.view3d.view.removeItem(it)
+        self.view3d.weld_sphere_items = []
+
         if not samples:
             return
 
-        # 2) 포인트 위치/색 준비
-        pos = []
-        col = []
-        for row in samples:
-            x, y, z = row.source_xyz  # (x,y,z)
-            pos.append([float(x), float(y), float(z) + float(z_lift)])
-            col.append([1.0, 1.0, 0.0, float(alpha)])            
+        half = float(side_mm) * 0.5
+        z_lift = float(z_lift)
 
-        pos = np.asarray(pos, dtype=np.float32)
-        col = np.asarray(col, dtype=np.float32)
+        # 텍스트 오프셋(월드 단위)
+        text_dx = half
+        text_dy = half
+        text_dz = float(side_mm)
 
-        # 3) "네모처럼 보이는" 큰 포인트 찍기 (가장 간단)
-        self.view3d.weld_mark_item = gl.GLScatterPlotItem(
-            pos=pos,
-            color=col,
-            size=float(size),
-            pxMode=True  # 화면 픽셀 크기로 유지(마커처럼 보기 좋음)
-        )
-        self.view3d.view.addItem(self.view3d.weld_mark_item)
+        # 12개 edge
+        edges = [
+            (0, 1), (1, 2), (2, 3), (3, 0),  # bottom
+            (4, 5), (5, 6), (6, 7), (7, 4),  # top
+            (0, 4), (1, 5), (2, 6), (3, 7),  # vertical
+        ]
 
-        # 4) roi_id 텍스트를 좌상단으로 약간 오프셋해서 표시
-        #    (화면 좌표가 아니라 월드 좌표라 완벽한 "좌상단" 고정은 아니지만,
-        #     점 기준으로 살짝 위/옆으로 치우치게 하면 시각적으로 좌상단처럼 보임)
-        text_dx = 5.0
-        text_dy = 5.0
-        text_dz = 5.0
+        # ✅ sphere 메쉬 데이터는 1번만 만들고 재사용(중요)
+        sphere_md = gl.MeshData.sphere(rows=int(sphere_rows), cols=int(sphere_cols), radius=float(sphere_radius_mm))
 
         for row in samples:
-            x, y, z = row.source_xyz
+            cx, cy, cz = map(float, row.source_xyz)
+            cz += z_lift
+
+            z0 = cz - half
+            z1 = cz + half
+
+            p0 = (cx - half, cy - half, z0)
+            p1 = (cx + half, cy - half, z0)
+            p2 = (cx + half, cy + half, z0)
+            p3 = (cx - half, cy + half, z0)
+
+            p4 = (cx - half, cy - half, z1)
+            p5 = (cx + half, cy - half, z1)
+            p6 = (cx + half, cy + half, z1)
+            p7 = (cx - half, cy + half, z1)
+
+            verts = np.array([p0, p1, p2, p3, p4, p5, p6, p7], dtype=np.float32)
+
+            line_pts = np.empty((len(edges) * 2, 3), dtype=np.float32)
+            for ei, (a, b) in enumerate(edges):
+                line_pts[2 * ei + 0] = verts[a]
+                line_pts[2 * ei + 1] = verts[b]
+
+            if bool(row.real_ng):
+                color = (0.0, 1.0, 0.0, 1.0)  # green
+            else:
+                color = (1.0, 0.0, 0.0, 1.0)  # red
+
+            # --- wireframe voxel ---
+            voxel_wire = gl.GLLinePlotItem(
+                pos=line_pts,
+                mode='lines',
+                color=color,
+                width=float(line_width),
+                antialias=True
+            )
+            self.view3d.view.addItem(voxel_wire)
+            self.view3d.weld_square_items.append(voxel_wire)
+
+            # ✅ --- sphere at center ---
+            sphere = gl.GLMeshItem(
+                meshdata=sphere_md,
+                smooth=True,
+                color=color,
+                glOptions='opaque'
+            )
+            sphere.translate(cx, cy, cz)  # 중심 위치로 이동
+            self.view3d.view.addItem(sphere)
+            self.view3d.weld_sphere_items.append(sphere)
+
+            text_color = (0, 255, 0, 255)
+            if bool(row.real_ng) == False:
+                text_color = (255, 0, 0, 255)
+            # --- roi_id text ---
             t = gl.GLTextItem(
-                pos=pg.Vector(float(x + text_dx), float(y + text_dy), float(z + text_dz)),
+                pos=(float(cx + text_dx), float(cy + text_dy), float(cz + text_dz)),
                 text=str(row.roi_id),
-                color=(1.0, 1.0, 1.0, 1.0)  # 흰색 글씨
+                color=text_color # 또는 (1,1,1,1) 둘 다 되는 버전 있음
             )
             self.view3d.view.addItem(t)
             self.view3d.weld_text_items.append(t)
