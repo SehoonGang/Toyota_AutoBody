@@ -26,6 +26,12 @@ class PCD:
 
         return
     
+    def clear_data_structures(self):
+        self.scan_path_dict = {}
+        self.scan_pcd_dict = {}
+        self.scan_T_base_cam_dict = {}
+        self.scan_detected_circle_centers = {}
+    
     def set_path(self, body_path):
         self._body_path = body_path
 
@@ -38,7 +44,7 @@ class PCD:
         if current_model == 'LH' :
             if frame_number == 1 :
                 detect_circle_setting['minRadius'] = 10
-                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting,x= 1527, y= 1169, r = 100)
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting,x= 1570, y= 1093, r = 100)
                 if circles2d:
                     self.scan_detected_circle_centers[frame_number].append(circles2d[0])
 
@@ -56,20 +62,20 @@ class PCD:
                         minRadius=20,           # ✅ 핵심: inner edge 배제
                         maxRadius=60          # ✅ 핵심: 바깥 원 범위로 제한
                     )
-                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting,x= 452, y= 1202, r = 100)
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting,x= 495, y= 1126, r = 100)
                 if circles2d:
                     self.scan_detected_circle_centers[frame_number].append(circles2d[0])
 
             elif frame_number == 3:
-                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x= 2110, y=1010, r=100)
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x= 2145, y=935, r=100)
                 if circles2d:
                     self.scan_detected_circle_centers[frame_number].append(circles2d[0])
             elif frame_number == 5:                
-                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=1166, y=844, r= 100)
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=1206, y=777, r= 100)
                 if circles2d:
                     self.scan_detected_circle_centers[frame_number].append(circles2d[0])
                 detect_circle_setting['minRadius'] = 20
-                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=2072, y=634, r= 100)
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=2112, y=556, r= 100)
                 if circles2d:
                     self.scan_detected_circle_centers[frame_number].append(circles2d[0])
         else :
@@ -85,24 +91,24 @@ class PCD:
                         minDist=120,            # 140 -> 120 (큰 의미 없지만 ROI내 1개면 낮춰도 됨)
                         param1=60,              # 120 -> 90 (에지 더 뽑히게)
                         param2=16,              # 24 -> 16 (누적 임계 낮춰 바깥 원 같은 약한 원도 후보로)
-                        minRadius=20,           # ✅ 핵심: inner edge 배제
+                        minRadius=1,           # ✅ 핵심: inner edge 배제
                         maxRadius=60          # ✅ 핵심: 바깥 원 범위로 제한
                     )
-                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=432, y = 1102, r = 100)
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=459, y = 1074, r = 100)
                 if circles2d:
                     self.scan_detected_circle_centers[frame_number].append(circles2d[0])
-                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=642, y = 701, r = 100)
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=669, y = 668, r = 100)
                 if circles2d:
                     self.scan_detected_circle_centers[frame_number].append(circles2d[0])
-                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=806, y = 911, r = 100)
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=834, y = 869, r = 100)
                 if circles2d:
                     self.scan_detected_circle_centers[frame_number].append(circles2d[0])                    
             elif frame_number == 3:
-                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=2106, y = 673, r = 100)
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x=2115, y = 583, r = 100)
                 if circles2d:
                     self.scan_detected_circle_centers[frame_number].append(circles2d[0])
             elif frame_number == 5:
-                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x = 1172, y = 802, r=100)
+                circles2d = self.scan_find_circle_center(texture=texture, detect_circle_setting=detect_circle_setting, x = 1178, y = 761, r=100)
                 if circles2d:
                     self.scan_detected_circle_centers[frame_number].append(circles2d[0])
 
@@ -933,13 +939,13 @@ class PCD:
             gy = ry + y_off
             
 
-            # vis_final = texture.copy()
-            # if self._verbose == True:
-            #     cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
-            #     cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
-            #     cv2.imshow("final(best overall)", vis_final)
-            #     cv2.waitKey(0)
-            #     cv2.destroyAllWindows()
+            vis_final = texture.copy()
+            if self._verbose == True:
+                cv2.circle(vis_final, (gx, gy), int(round(rr)), (0, 255, 0), 2)
+                cv2.circle(vis_final, (gx, gy), 2, (0, 255, 0), -1)
+                cv2.imshow("final(best overall)", vis_final)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
 
             results.append((gx, gy, rr, score, arc_cov))
 

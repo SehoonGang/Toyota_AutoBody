@@ -21,11 +21,11 @@
     },
     "sehoon" :
     {
-        "source_data_folder": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\LH_MOVE_X",
-        "calibration_file": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\cam_robot_extrinsic_0_1_hand_eye.yml",
-        "deep_learning_model": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\260123_inspection_model.pt",
+        "source_data_folder": "C:\\Users\\SehoonKang\\Desktop\\rh_origin",
+        "calibration_file": "C:\\Users\\SehoonKang\\Documents\\GitHub\\Toyota_AutoBody\\data\\cam_robot_extrinsic_0_1_hand_eye.yml",
+        "deep_learning_model": "C:\\Users\\SehoonKang\\Documents\\GitHub\\Toyota_AutoBody\\data\\260123_inspection_model.pt",
         "bodyPath": "C:\\Users\\SehoonKang\\Desktop\\dataset\\260113_Scan\\260113_Scan\\body.ply",
-        "BodyPosition": "Left",
+        "BodyPosition": "Right",
         "cad_scale" : 1
     },
     "shkang_gram" :
